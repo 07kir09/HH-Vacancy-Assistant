@@ -1,6 +1,7 @@
 {
   "name": "Your Name",
   "hh_resume_id": "",
+  "profile_reviewed": false,
   "target_roles": [
     "Data Analyst",
     "Product Analyst",

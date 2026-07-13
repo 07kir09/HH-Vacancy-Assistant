@@ -53,6 +53,7 @@ def create_user(user_id: str) -> Path:
                 {
                     "name": "",
                     "hh_resume_id": "",
+                    "profile_reviewed": False,
                     "target_roles": [],
                     "city": "Moscow",
                     "desired_salary": 100000,

@@ -126,6 +126,7 @@ HTML = r"""<!doctype html>
       gap: 14px;
       align-items: start;
     }
+    .wide { grid-column: 1 / -1; }
     .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
     .tab.active { background: #dbeafe; border-color: #93c5fd; color: #0f3d8a; }
     .users { display: grid; gap: 6px; }
@@ -166,6 +167,28 @@ HTML = r"""<!doctype html>
       color: var(--muted);
       font-size: 12px;
       line-height: 1.45;
+    }
+    .summary.warn { border-color: #fed7aa; background: var(--danger-bg); color: #9a3412; }
+    .summary.ok { border-color: #bbf7d0; background: var(--ok-bg); color: #166534; }
+    .checklist {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .checklist li {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .raw-text {
+      min-height: 180px;
+      max-height: 320px;
+      background: #f8fafc;
     }
     .empty {
       border: 1px dashed #b7c3d0;
@@ -273,6 +296,21 @@ HTML = r"""<!doctype html>
             </div>
             <div id="tokenSummary" class="summary">Сначала сохрани оба ключа, потом получи application token.</div>
           </div>
+          <div id="parsePanel" class="panel stack wide" style="display: none">
+            <div class="row">
+              <div style="flex: 1">
+                <h2>Проверка распознавания резюме</h2>
+                <div class="help">Перед поиском проверь, что текст резюме извлекся корректно, а профиль заполнен без ошибок.</div>
+              </div>
+              <button onclick="showTab('profile')">Проверить профиль</button>
+            </div>
+            <div id="parseSummary" class="summary">Загрузи резюме, чтобы увидеть отчет.</div>
+            <ul id="parseChecklist" class="checklist"></ul>
+            <details>
+              <summary>Показать извлеченный сырой текст</summary>
+              <textarea id="rawResumeText" class="raw-text" readonly></textarea>
+            </details>
+          </div>
         </div>
       </section>
 
@@ -281,9 +319,9 @@ HTML = r"""<!doctype html>
           <div class="row">
             <div style="flex: 1">
               <h2>Профиль из резюме</h2>
-              <div class="help">Здесь можно поправить роли, зарплату, навыки и факты для сопроводительных писем.</div>
+              <div class="help">Здесь можно поправить роли, зарплату, навыки и факты для сопроводительных писем. Поиск доступен только после сохранения и подтверждения профиля.</div>
             </div>
-            <button class="primary" onclick="saveProfile()">Сохранить профиль</button>
+            <button class="primary" onclick="saveProfile()">Сохранить и подтвердить профиль</button>
           </div>
           <textarea id="profileText" placeholder="После загрузки резюме здесь появится JSON-профиль кандидата."></textarea>
         </div>
@@ -344,6 +382,10 @@ HTML = r"""<!doctype html>
     const currentUserEl = document.getElementById('currentUser');
     const resumeSummaryEl = document.getElementById('resumeSummary');
     const tokenSummaryEl = document.getElementById('tokenSummary');
+    const parsePanelEl = document.getElementById('parsePanel');
+    const parseSummaryEl = document.getElementById('parseSummary');
+    const parseChecklistEl = document.getElementById('parseChecklist');
+    const rawResumeTextEl = document.getElementById('rawResumeText');
 
     function log(message) {
       logEl.textContent = `${new Date().toLocaleTimeString()} ${message}\n` + logEl.textContent;
@@ -449,6 +491,7 @@ HTML = r"""<!doctype html>
       document.getElementById('configText').value = config.config;
       currentUserEl.textContent = `Пользователь: ${currentUser}`;
       updateResumeSummary(profile.profile);
+      updateParseReport(profile.parse_report || null, profile.extracted_text || '');
       await loadDrafts();
     }
     async function uploadResume() {
@@ -463,7 +506,9 @@ HTML = r"""<!doctype html>
         const config = await api(`/api/users/${currentUser}/config`);
         document.getElementById('configText').value = config.config;
         updateResumeSummary(data.profile);
-        setStatus(`Резюме загружено. Найдено навыков: ${data.skills.length}.`, 'ok');
+        updateParseReport(data.parse_report, data.extracted_text);
+        const kind = data.parse_report && data.parse_report.score >= 70 ? 'ok' : 'error';
+        setStatus(`Резюме загружено. Качество распознавания: ${data.parse_report.score}/100. Проверь и подтверди профиль.`, kind);
         log(`Резюме распарсено: ${data.skills.join(', ') || 'навыки не найдены'}`);
       });
     }
@@ -471,10 +516,12 @@ HTML = r"""<!doctype html>
       await runAction('Сохраняю профиль...', async () => {
         requireUser();
         const profile = JSON.parse(document.getElementById('profileText').value);
+        profile.profile_reviewed = true;
         await api(`/api/users/${currentUser}/profile`, {method: 'POST', body: JSON.stringify({profile})});
+        document.getElementById('profileText').value = JSON.stringify(profile, null, 2);
         updateResumeSummary(profile);
-        setStatus('Профиль сохранен.', 'ok');
-        log('Профиль сохранен');
+        setStatus('Профиль сохранен и подтвержден. Теперь можно запускать поиск.', 'ok');
+        log('Профиль сохранен и подтвержден');
       });
     }
     async function saveConfig() {
@@ -590,7 +637,38 @@ HTML = r"""<!doctype html>
       const name = profile.name || 'имя не найдено';
       const roles = (profile.target_roles || []).slice(0, 3).join(', ') || 'роли не указаны';
       const skills = (profile.skills || []).slice(0, 8).join(', ') || 'навыки не найдены';
-      resumeSummaryEl.textContent = `Кандидат: ${name}. Роли: ${roles}. Навыки: ${skills}.`;
+      const reviewed = profile.profile_reviewed ? 'Профиль подтвержден.' : 'Профиль нужно проверить и сохранить.';
+      resumeSummaryEl.textContent = `Кандидат: ${name}. Роли: ${roles}. Навыки: ${skills}. ${reviewed}`;
+      resumeSummaryEl.className = `summary ${profile.profile_reviewed ? 'ok' : 'warn'}`;
+    }
+    function updateParseReport(report, extractedText) {
+      if (!report) {
+        parsePanelEl.style.display = 'none';
+        rawResumeTextEl.value = '';
+        parseChecklistEl.innerHTML = '';
+        return;
+      }
+      parsePanelEl.style.display = '';
+      const ok = report.score >= 70;
+      parseSummaryEl.className = `summary ${ok ? 'ok' : 'warn'}`;
+      parseSummaryEl.textContent = `${report.status}: ${report.score}/100. Символов: ${report.text_chars}. Слов: ${report.word_count}.`;
+      const found = report.found || {};
+      const checks = [
+        ['Имя', found.name],
+        ['Email', found.email],
+        ['Телефон', found.phone],
+        ['Навыки', found.skills],
+        ['Целевые роли', found.target_roles],
+        ['Опыт', found.experience],
+        ['Проекты', found.projects],
+        ['Образование', found.education]
+      ];
+      const warnings = (report.warnings || []).map(item => `<li><span>!</span><span>${escapeHtml(item)}</span></li>`).join('');
+      parseChecklistEl.innerHTML = checks.map(([label, value]) => {
+        const mark = value ? '+' : '-';
+        return `<li><span>${mark}</span><span>${escapeHtml(label)}: ${value ? 'найдено' : 'не найдено'}</span></li>`;
+      }).join('') + warnings;
+      rawResumeTextEl.value = extractedText || report.preview || '';
     }
     function escapeHtml(value) {
       return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -672,12 +750,21 @@ class Handler(BaseHTTPRequestHandler):
         user = parts[2]
         if len(parts) == 4 and parts[3] == "profile":
             if method == "GET":
-                self._send_json({"profile": load_user_profile(user)})
+                profile = load_user_profile(user)
+                extracted = _load_extracted_text(user)
+                self._send_json(
+                    {
+                        "profile": profile,
+                        "extracted_text": extracted,
+                        "parse_report": _parse_report(extracted, profile) if extracted else None,
+                    }
+                )
                 return
             if method == "POST":
                 profile = self._read_json().get("profile")
                 if not isinstance(profile, dict):
                     raise WebError(HTTPStatus.BAD_REQUEST, "profile must be an object")
+                profile["profile_reviewed"] = True
                 save_user_profile(user, profile)
                 self._send_json({"ok": True})
                 return
@@ -710,10 +797,20 @@ class Handler(BaseHTTPRequestHandler):
                     "Из файла не удалось извлечь текст. Попробуй DOCX/TXT или PDF с текстовым слоем.",
                 )
             profile = build_profile_from_text(text)
+            profile["profile_reviewed"] = False
+            _save_extracted_text(user, text)
+            report = _parse_report(text, profile)
             save_user_profile(user, profile)
             config = _configure_search(load_user_config(user), profile)
             save_user_config(user, config)
-            self._send_json({"profile": profile, "skills": profile.get("skills", [])})
+            self._send_json(
+                {
+                    "profile": profile,
+                    "skills": profile.get("skills", []),
+                    "extracted_text": text,
+                    "parse_report": report,
+                }
+            )
             return
         if len(parts) == 4 and parts[3] == "credentials" and method == "POST":
             data = self._read_json()
@@ -735,6 +832,7 @@ class Handler(BaseHTTPRequestHandler):
             config, profile, storage = _context(user)
             _validate_hh_credentials(config)
             _validate_search_config(config)
+            _validate_profile_reviewed(profile)
             api = make_api(config, storage, "hh_app")
             output = io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
@@ -835,6 +933,79 @@ def _validate_search_config(config: dict) -> None:
     keywords = config.get("search", {}).get("keywords", [])
     if not isinstance(keywords, list) or not any(str(item).strip() for item in keywords):
         raise WebError(HTTPStatus.BAD_REQUEST, "В параметрах поиска нет search.keywords.")
+
+
+def _validate_profile_reviewed(profile: dict) -> None:
+    if not profile.get("profile_reviewed"):
+        raise WebError(
+            HTTPStatus.BAD_REQUEST,
+            "Перед поиском открой вкладку «Профиль», проверь распознанные данные и нажми «Сохранить и подтвердить профиль».",
+        )
+
+
+def _save_extracted_text(user: str, text: str) -> None:
+    path = user_dir(user) / "extracted_resume_text.txt"
+    path.write_text(text, encoding="utf-8")
+
+
+def _load_extracted_text(user: str) -> str:
+    path = user_dir(user) / "extracted_resume_text.txt"
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
+def _parse_report(text: str, profile: dict) -> dict:
+    compact = " ".join(text.split())
+    word_count = len(compact.split())
+    found = {
+        "name": bool(profile.get("name")),
+        "email": bool((profile.get("links") or {}).get("email")),
+        "phone": bool((profile.get("links") or {}).get("phone")),
+        "skills": len(profile.get("skills", [])) >= 3,
+        "target_roles": bool(profile.get("target_roles")),
+        "experience": bool(profile.get("experience")),
+        "projects": bool(profile.get("projects")),
+        "education": bool(profile.get("education")),
+    }
+    weights = {
+        "name": 10,
+        "email": 10,
+        "phone": 8,
+        "skills": 20,
+        "target_roles": 12,
+        "experience": 15,
+        "projects": 15,
+        "education": 10,
+    }
+    score = sum(weights[key] for key, value in found.items() if value)
+    warnings: list[str] = []
+    if len(compact) < 800:
+        score = min(score, 55)
+        warnings.append("Извлечено мало текста. PDF может быть сканом или текстовый слой может быть поврежден.")
+    if word_count < 120:
+        warnings.append("Слишком мало слов для уверенного заполнения профиля.")
+    if not found["email"] and not found["phone"]:
+        warnings.append("Не найдены email и телефон. Проверь контакты вручную.")
+    if not found["skills"]:
+        warnings.append("Найдено мало навыков. Проверь поле skills в профиле.")
+    if not found["experience"] and not found["projects"]:
+        warnings.append("Не найден опыт или проекты. Проверь соответствующие блоки в профиле.")
+    if score >= 80:
+        status = "Хорошее распознавание"
+    elif score >= 60:
+        status = "Среднее распознавание"
+    else:
+        status = "Низкое распознавание"
+    return {
+        "score": int(score),
+        "status": status,
+        "text_chars": len(compact),
+        "word_count": word_count,
+        "found": found,
+        "warnings": warnings,
+        "preview": compact[:4000],
+    }
 
 
 def _http_status(status_code: int) -> HTTPStatus:
