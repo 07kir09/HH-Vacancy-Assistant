@@ -3,7 +3,7 @@ hh:
   auth_url: "https://hh.ru/oauth/authorize"
   token_url: "https://api.hh.ru/token"
   redirect_uri: "http://localhost:8080/callback"
-  user_agent: "HH-Vacancy-Assistant/0.1 (replace-with-your-email@example.com)"
+  user_agent: "HH-Vacancy-Assistant/1.0 (contact-email-required)"
 
 storage:
   sqlite_path: "job_apply_bot.db"

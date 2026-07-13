@@ -80,7 +80,7 @@ def make_api(config: dict[str, Any], storage: Storage, token_provider: str = "hh
         base_url=hh.get("base_url", "https://api.hh.ru"),
         token_url=hh.get("token_url", "https://api.hh.ru/token"),
         auth_url=hh.get("auth_url", "https://hh.ru/oauth/authorize"),
-        user_agent=hh.get("user_agent", "job_apply_bot/0.1"),
+        user_agent=hh.get("user_agent", "HH-Vacancy-Assistant/1.0"),
         client_id=os.getenv("HH_CLIENT_ID") or hh.get("client_id"),
         client_secret=os.getenv("HH_CLIENT_SECRET") or hh.get("client_secret"),
         access_token=access_token,
@@ -133,8 +133,17 @@ def scan(config: dict[str, Any], profile: dict[str, Any], api: HHApiClient, stor
             try:
                 result = api.search_vacancies(search_params(config, keyword, page))
             except HHApiError as exc:
-                print(f"Search failed for {keyword}: {exc.status_code}: {exc.payload}", file=sys.stderr)
-                continue
+                if _is_token_revoked(exc):
+                    print("HH application token is revoked. Requesting a new one...")
+                    api.get_application_token()
+                    try:
+                        result = api.search_vacancies(search_params(config, keyword, page))
+                    except HHApiError as retry_exc:
+                        print(f"Search failed for {keyword}: {retry_exc.status_code}: {retry_exc.payload}", file=sys.stderr)
+                        continue
+                else:
+                    print(f"Search failed for {keyword}: {exc.status_code}: {exc.payload}", file=sys.stderr)
+                    continue
             for item in result.get("items", []):
                 vacancy_id = str(item.get("id"))
                 if not vacancy_id or vacancy_id in seen_ids or storage.has_terminal_status(vacancy_id):
@@ -158,6 +167,18 @@ def scan(config: dict[str, Any], profile: dict[str, Any], api: HHApiClient, stor
                     return
             time.sleep(delay)
     print(f"Scan complete. Drafts created/updated: {created}")
+
+
+def _is_token_revoked(exc: HHApiError) -> bool:
+    payload = exc.payload if isinstance(exc.payload, dict) else {}
+    errors = payload.get("errors", [])
+    return (
+        exc.status_code in {401, 403}
+        and (
+            payload.get("oauth_error") == "token-revoked"
+            or any(isinstance(item, dict) and item.get("value") == "token_revoked" for item in errors)
+        )
+    )
 
 
 def cmd_auth_url(config: dict[str, Any], api: HHApiClient) -> None:
@@ -215,9 +236,9 @@ def cmd_import_resume(user_id: str, resume_path: str) -> None:
     print(f"Extracted skills: {', '.join(profile.get('skills', [])[:12])}")
 
 
-def cmd_set_credentials(user_id: str, client_id: str, client_secret: str) -> None:
+def cmd_set_credentials(user_id: str, client_id: str, client_secret: str, contact_email: str = "") -> None:
     create_user(user_id)
-    save_credentials(user_id, client_id, client_secret)
+    save_credentials(user_id, client_id, client_secret, contact_email)
     print(f"Saved HH credentials for user '{user_id}'.")
 
 
@@ -253,6 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
     credentials.add_argument("--user", required=True)
     credentials.add_argument("--client-id", required=True)
     credentials.add_argument("--client-secret", required=True)
+    credentials.add_argument("--contact-email", default="", help="Real contact email for HH User-Agent")
     return parser
 
 
@@ -263,7 +285,7 @@ def main() -> None:
             cmd_import_resume(args.user, args.resume_path)
             return
         if args.command == "set-credentials":
-            cmd_set_credentials(args.user, args.client_id, args.client_secret)
+            cmd_set_credentials(args.user, args.client_id, args.client_secret, args.contact_email)
             return
         if args.command == "web":
             from local_web import run_server

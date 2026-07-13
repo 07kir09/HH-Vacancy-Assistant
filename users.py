@@ -109,10 +109,19 @@ def credentials_path(user_id: str) -> Path:
     return ensure_user(user_id) / "credentials.json"
 
 
-def save_credentials(user_id: str, client_id: str, client_secret: str) -> None:
+def save_credentials(user_id: str, client_id: str, client_secret: str, contact_email: str = "") -> None:
     path = credentials_path(user_id)
-    data = {"HH_CLIENT_ID": client_id.strip(), "HH_CLIENT_SECRET": client_secret.strip()}
+    contact_email = contact_email.strip()
+    data = {
+        "HH_CLIENT_ID": client_id.strip(),
+        "HH_CLIENT_SECRET": client_secret.strip(),
+        "HH_CONTACT_EMAIL": contact_email,
+    }
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if contact_email:
+        config = load_user_config(user_id)
+        config.setdefault("hh", {})["user_agent"] = f"HH-Vacancy-Assistant/1.0 ({contact_email})"
+        save_user_config(user_id, config)
     try:
         path.chmod(0o600)
     except OSError:
@@ -127,17 +136,22 @@ def load_credentials(user_id: str) -> dict[str, str]:
     return {
         "HH_CLIENT_ID": str(data.get("HH_CLIENT_ID", "")).strip(),
         "HH_CLIENT_SECRET": str(data.get("HH_CLIENT_SECRET", "")).strip(),
+        "HH_CONTACT_EMAIL": str(data.get("HH_CONTACT_EMAIL", "")).strip(),
     }
 
 
 def runtime_config_for_user(user_id: str) -> dict[str, Any]:
     config = load_user_config(user_id)
     creds = load_credentials(user_id)
+    profile = load_user_profile(user_id)
+    contact_email = creds.get("HH_CONTACT_EMAIL") or str((profile.get("links") or {}).get("email", "")).strip()
     config.setdefault("hh", {})
     if creds.get("HH_CLIENT_ID"):
         config["hh"]["client_id"] = creds["HH_CLIENT_ID"]
     if creds.get("HH_CLIENT_SECRET"):
         config["hh"]["client_secret"] = creds["HH_CLIENT_SECRET"]
+    if contact_email:
+        config["hh"]["user_agent"] = f"HH-Vacancy-Assistant/1.0 ({contact_email})"
     config.setdefault("storage", {})["sqlite_path"] = str(user_dir(user_id) / "job_apply_bot.db")
     return config
 

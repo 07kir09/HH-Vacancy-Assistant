@@ -290,6 +290,11 @@ HTML = r"""<!doctype html>
               <input id="clientSecret" type="password" autocomplete="off" placeholder="client_secret из dev.hh.ru" />
               <div class="help">Секрет хранится только локально в папке пользователя и не попадает в git.</div>
             </div>
+            <div>
+              <label class="required">Контактный email для HH User-Agent</label>
+              <input id="contactEmail" autocomplete="email" placeholder="name@your-domain.ru" />
+              <div class="help">HH требует понятный User-Agent с реальным контактом. Не используй example.com или тестовые адреса.</div>
+            </div>
             <div class="row">
               <button onclick="saveCredentials()">Сохранить ключи</button>
               <button class="primary" onclick="getAppToken()">Проверить доступ</button>
@@ -489,6 +494,10 @@ HTML = r"""<!doctype html>
       const config = await api(`/api/users/${currentUser}/config`);
       document.getElementById('profileText').value = JSON.stringify(profile.profile, null, 2);
       document.getElementById('configText').value = config.config;
+      const email = ((profile.profile.links || {}).email || '').trim();
+      if (email && !document.getElementById('contactEmail').value) {
+        document.getElementById('contactEmail').value = email;
+      }
       currentUserEl.textContent = `Пользователь: ${currentUser}`;
       updateResumeSummary(profile.profile);
       updateParseReport(profile.parse_report || null, profile.extracted_text || '');
@@ -539,7 +548,8 @@ HTML = r"""<!doctype html>
           method: 'POST',
           body: JSON.stringify({
             client_id: document.getElementById('clientId').value,
-            client_secret: document.getElementById('clientSecret').value
+            client_secret: document.getElementById('clientSecret').value,
+            contact_email: document.getElementById('contactEmail').value
           })
         });
         document.getElementById('clientSecret').value = '';
@@ -816,9 +826,12 @@ class Handler(BaseHTTPRequestHandler):
             data = self._read_json()
             client_id = str(data.get("client_id", "")).strip()
             client_secret = str(data.get("client_secret", "")).strip()
+            contact_email = str(data.get("contact_email", "")).strip()
             if not client_id or not client_secret:
                 raise WebError(HTTPStatus.BAD_REQUEST, "Заполни HH_CLIENT_ID и HH_CLIENT_SECRET.")
-            save_credentials(user, client_id, client_secret)
+            if not _valid_contact_email(contact_email):
+                raise WebError(HTTPStatus.BAD_REQUEST, "Укажи реальный контактный email для HH User-Agent.")
+            save_credentials(user, client_id, client_secret, contact_email)
             self._send_json({"ok": True})
             return
         if len(parts) == 4 and parts[3] == "app-token" and method == "POST":
@@ -927,6 +940,29 @@ def _validate_hh_credentials(config: dict) -> None:
     hh = config.get("hh", {})
     if not str(hh.get("client_id", "")).strip() or not str(hh.get("client_secret", "")).strip():
         raise WebError(HTTPStatus.BAD_REQUEST, "Сначала сохрани HH_CLIENT_ID и HH_CLIENT_SECRET.")
+    _validate_user_agent(str(hh.get("user_agent", "")))
+
+
+def _valid_contact_email(email: str) -> bool:
+    if not email or "example." in email.lower():
+        return False
+    return bool(__import__("re").match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email))
+
+
+def _validate_user_agent(user_agent: str) -> None:
+    value = user_agent.strip().lower()
+    if (
+        not value
+        or "example." in value
+        or "replace-with" in value
+        or "contact-email-required" in value
+        or "job_apply_bot" in value
+        or "@" not in value
+    ):
+        raise WebError(
+            HTTPStatus.BAD_REQUEST,
+            "HH отклонит текущий User-Agent. В блоке «Доступ к HH API» укажи реальный контактный email и нажми «Сохранить ключи».",
+        )
 
 
 def _validate_search_config(config: dict) -> None:

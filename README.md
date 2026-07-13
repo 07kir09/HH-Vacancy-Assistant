@@ -25,10 +25,11 @@
 6. Проверяешь качество распознавания и сырой текст.
 7. Открываешь профиль, правишь ошибки и подтверждаешь профиль.
 8. Вставляешь `HH_CLIENT_ID` и `HH_CLIENT_SECRET`.
-9. Нажимаешь `Проверить доступ`.
-10. Нажимаешь `Найти вакансии`.
-11. Открываешь вкладку `Черновики`.
-12. Выбираешь вакансию, копируешь письмо и открываешь отклик на hh.ru.
+9. Вводишь контактный email для HH User-Agent.
+10. Нажимаешь `Проверить доступ`.
+11. Нажимаешь `Найти вакансии`.
+12. Открываешь вкладку `Черновики`.
+13. Выбираешь вакансию, копируешь письмо и открываешь отклик на hh.ru.
 
 ## Требования
 
@@ -216,6 +217,8 @@ HH_CLIENT_ID
 HH_CLIENT_SECRET
 ```
 
+В поле `Контактный email для HH User-Agent` укажи реальный email, по которому с тобой можно связаться. Не используй `example.com`, тестовые адреса или пустое значение. HH может отклонять запросы с плохим User-Agent.
+
 Нажми:
 
 ```text
@@ -366,6 +369,12 @@ python main.py import-resume "/path/to/resume.pdf" --user friend
 python main.py set-credentials --user friend --client-id "..." --client-secret "..."
 ```
 
+Лучше сразу указать контактный email для HH User-Agent:
+
+```bash
+python main.py set-credentials --user friend --client-id "..." --client-secret "..." --contact-email "name@your-domain.ru"
+```
+
 Получить application token:
 
 ```bash
@@ -440,6 +449,24 @@ uploads/
 - неверный `HH_CLIENT_ID`;
 - неверный `HH_CLIENT_SECRET`;
 - в dev.hh.ru не настроено приложение.
+
+### `Bad User-Agent header`
+
+HH отклонил запрос из-за плохого `User-Agent`. Обычно это происходит, если в конфиге остался шаблонный email, `example.com` или старое значение `job_apply_bot`.
+
+Что сделать:
+
+1. Открой веб-интерфейс.
+2. Перейди во вкладку `1. Настройка`.
+3. В блоке `Доступ к HH API` заполни `Контактный email для HH User-Agent`.
+4. Нажми `Сохранить ключи`.
+5. Снова нажми `Проверить доступ` или `Найти вакансии`.
+
+Через CLI:
+
+```bash
+python main.py set-credentials --user friend --client-id "..." --client-secret "..." --contact-email "name@your-domain.ru"
+```
 
 ### `No draft applications found`
 
