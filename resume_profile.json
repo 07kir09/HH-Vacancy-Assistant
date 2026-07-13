@@ -1,0 +1,76 @@
+{
+  "name": "Your Name",
+  "hh_resume_id": "",
+  "target_roles": [
+    "Data Analyst",
+    "Product Analyst",
+    "BI Analyst"
+  ],
+  "city": "Moscow",
+  "desired_salary": 150000,
+  "experience_summary": "Short summary of your relevant analytics, SQL, Python, BI, product or data experience.",
+  "skills": [
+    "SQL",
+    "Python",
+    "Pandas",
+    "Power BI",
+    "Tableau",
+    "Product analytics",
+    "A/B testing",
+    "Statistics"
+  ],
+  "strengths": [
+    "translate business questions into metrics and analytical tasks",
+    "work with SQL, Python and tabular data",
+    "build dashboards and clear analytical summaries"
+  ],
+  "links": {
+    "phone": "",
+    "portfolio": "",
+    "telegram": "",
+    "email": "",
+    "github": ""
+  },
+  "education": {},
+  "experience": [],
+  "projects": [],
+  "achievements": [],
+  "relevant_focus": [
+    "Product/Data Analytics",
+    "BI",
+    "Metrics and dashboards"
+  ],
+  "avoid_roles": [
+    "Senior",
+    "Lead",
+    "QA",
+    "DevOps",
+    "1C"
+  ],
+  "preferred_industries": [
+    "FinTech",
+    "IT",
+    "Data Products"
+  ],
+  "preferred_keywords": [
+    "SQL",
+    "Python",
+    "pandas",
+    "dashboards",
+    "product metrics",
+    "A/B testing",
+    "Power BI",
+    "Tableau"
+  ],
+  "cover_letter_facts": [
+    "I have experience with SQL and Python",
+    "I can build dashboards and analyze product metrics",
+    "I am interested in data-driven product and business tasks"
+  ],
+  "search_notes": "Edit this profile manually or upload a resume through the web dashboard.",
+  "cover_letter": {
+    "language": "ru",
+    "tone": "concise",
+    "custom_intro": ""
+  }
+}
