@@ -38,6 +38,17 @@ def list_users() -> list[str]:
     return sorted(path.name for path in USERS_ROOT.iterdir() if path.is_dir())
 
 
+def delete_user(user_id: str) -> None:
+    """Remove one local user and all of that user's private local data."""
+    path = user_dir(user_id)
+    root = USERS_ROOT.resolve()
+    if not path.exists():
+        raise ValueError("Пользователь не найден.")
+    if path.resolve().parent != root:
+        raise ValueError("Небезопасный путь пользователя.")
+    shutil.rmtree(path)
+
+
 def create_user(user_id: str) -> Path:
     path = ensure_user(user_id)
     config_path = path / "config.yaml"

@@ -13,6 +13,7 @@ from main import load_context, make_api, scan
 from storage import Storage
 from users import (
     create_user,
+    delete_user,
     list_users,
     load_user_config,
     load_user_profile,
@@ -130,8 +131,10 @@ HTML = r"""<!doctype html>
     .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
     .tab.active { background: #dbeafe; border-color: #93c5fd; color: #0f3d8a; }
     .users { display: grid; gap: 6px; }
-    .user-item { text-align: left; }
+    .user-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+    .user-item { text-align: left; overflow: hidden; text-overflow: ellipsis; }
     .user-item.active { border-color: var(--accent); background: #dbeafe; }
+    .delete-user { color: var(--danger); min-width: 36px; padding: 6px 8px; }
     .muted { color: var(--muted); }
     .small { font-size: 12px; }
     .help { color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 6px; }
@@ -218,6 +221,18 @@ HTML = r"""<!doctype html>
     .status-tag.review, .status-tag.draft { color: #1e40af; background: #dbeafe; }
     .reasons { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.5; }
     .letter-editor { min-height: 280px; font-family: inherit; font-size: 14px; }
+    .draft-heading { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+    .draft-heading h2 { flex: 1 1 300px; margin-bottom: 0; }
+    .score-tag { color: #0f3d8a; background: #dbeafe; border: 1px solid #93c5fd; }
+    .score-details { border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+    .score-details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+    .score-details .summary { margin-top: 8px; }
+    .draft-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .draft-actions .primary { margin-right: auto; }
+    .status-control { display: flex; gap: 8px; align-items: center; }
+    .status-control label { margin: 0; white-space: nowrap; }
+    .status-control select { min-width: 170px; }
+    .feedback-actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
     .metrics { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; }
     .metric { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: #f8fafc; }
     .metric-value { font-size: 22px; font-weight: 650; margin-top: 3px; }
@@ -361,7 +376,7 @@ HTML = r"""<!doctype html>
           <div class="panel stack">
             <div class="row">
               <div style="flex: 1">
-              <h2>Черновики откликов</h2>
+                <h2>Черновики откликов</h2>
                 <div class="help">Рекомендовано: score выше порога. На проверке: вакансия подходит, но требует твоего решения.</div>
               </div>
               <button onclick="loadDrafts()">Обновить</button>
@@ -369,19 +384,30 @@ HTML = r"""<!doctype html>
             <div id="draftsTable"></div>
           </div>
           <div class="panel stack">
-            <h2 id="selectedTitle">Сопроводительное письмо</h2>
-            <div id="scoreReasons" class="summary muted">Выбери вакансию слева, чтобы увидеть причины оценки.</div>
-            <textarea id="letter" class="letter-editor muted" placeholder="Выбери вакансию слева."></textarea>
-            <div class="row">
-              <button onclick="saveLetter()">Сохранить письмо</button>
-              <button onclick="copyLetter()">Копировать письмо</button>
-              <button class="primary" onclick="openSelected()">Открыть отклик</button>
-              <button class="good" onclick="markSelected('sent')">Отметить отправленным</button>
-              <button class="warn" onclick="markSelected('skipped')">Пропустить</button>
+            <div class="draft-heading">
+              <h2 id="selectedTitle">Сопроводительное письмо</h2>
+              <span id="selectedScore" class="status-tag score-tag" style="display: none"></span>
             </div>
-            <div class="row">
-              <button onclick="markSelected('recommended')">Рекомендовать</button>
-              <button onclick="markSelected('review')">На проверку</button>
+            <details class="score-details">
+              <summary id="scoreSummary">Почему оценка</summary>
+              <div id="scoreReasons" class="summary muted">Выбери вакансию слева, чтобы увидеть причины оценки.</div>
+            </details>
+            <textarea id="letter" class="letter-editor muted" placeholder="Выбери вакансию слева."></textarea>
+            <div class="draft-actions">
+              <button class="primary" onclick="openSelected()">Открыть на HH</button>
+              <button onclick="copyLetter()">Копировать</button>
+              <button onclick="saveLetter()">Сохранить</button>
+              <button class="good" onclick="markSelected('sent')">Отправил</button>
+            </div>
+            <div class="status-control">
+              <label for="draftStatus">Статус</label>
+              <select id="draftStatus">
+                <option value="recommended">Рекомендовано</option>
+                <option value="review">На проверке</option>
+              </select>
+              <button onclick="applyDraftStatus()">Обновить</button>
+            </div>
+            <div class="feedback-actions">
               <button onclick="saveFeedback('relevant')">Подходит</button>
               <button class="warn" onclick="saveFeedback('not_relevant')">Не подходит</button>
             </div>
@@ -489,11 +515,22 @@ HTML = r"""<!doctype html>
         box.innerHTML = '<div class="empty">Пока нет пользователей.</div>';
       }
       data.users.forEach(user => {
+        const row = document.createElement('div');
+        row.className = 'user-row';
         const btn = document.createElement('button');
         btn.className = 'user-item' + (user === currentUser ? ' active' : '');
         btn.textContent = user;
         btn.onclick = () => selectUser(user);
-        box.appendChild(btn);
+        const remove = document.createElement('button');
+        remove.className = 'delete-user';
+        remove.type = 'button';
+        remove.title = `Удалить пользователя ${user}`;
+        remove.setAttribute('aria-label', `Удалить пользователя ${user}`);
+        remove.textContent = 'Удалить';
+        remove.onclick = () => deleteUser(user);
+        row.appendChild(btn);
+        row.appendChild(remove);
+        box.appendChild(row);
       });
       if (!currentUser && data.users.length) await selectUser(data.users[0]);
     }
@@ -509,6 +546,24 @@ HTML = r"""<!doctype html>
         setStatus(`Пользователь ${currentUser} готов. Загрузи резюме или проверь профиль.`, 'ok');
         log(`Пользователь ${currentUser} создан`);
       });
+    }
+    async function deleteUser(user) {
+      const confirmed = window.confirm(`Удалить пользователя «${user}»? Будут удалены его резюме, HH-ключи, настройки и история откликов. Это действие нельзя отменить.`);
+      if (!confirmed) return;
+      let removed = false;
+      await runAction(`Удаляю пользователя ${user}...`, async () => {
+        await api(`/api/users/${encodeURIComponent(user)}`, {method: 'DELETE'});
+        const wasCurrent = currentUser === user;
+        if (wasCurrent) {
+          currentUser = null;
+          clearSelectedDraft();
+          clearUserData();
+        }
+        removed = true;
+        setStatus(`Пользователь ${user} удален.`, 'ok');
+        log(`Пользователь ${user} удален`);
+      });
+      if (removed) await loadUsers();
     }
     async function selectUser(user) {
       await runAction(`Загружаю профиль ${user}...`, async () => {
@@ -539,6 +594,19 @@ HTML = r"""<!doctype html>
       updateParseReport(profile.parse_report || null, profile.extracted_text || '');
       await loadDrafts();
       await loadStatistics();
+    }
+    function clearUserData() {
+      currentUserEl.textContent = 'Пользователь не выбран';
+      resumeSummaryEl.textContent = 'Резюме еще не загружено для выбранного пользователя.';
+      tokenSummaryEl.textContent = 'Выбери пользователя, чтобы настроить доступ к HH API.';
+      document.getElementById('profileText').value = '';
+      document.getElementById('configText').value = '';
+      document.getElementById('contactEmail').value = '';
+      document.getElementById('clientId').value = '';
+      document.getElementById('clientSecret').value = '';
+      document.getElementById('draftsTable').innerHTML = '<div class="empty">Выбери пользователя.</div>';
+      document.getElementById('statsMetrics').innerHTML = '';
+      updateParseReport(null, '');
     }
     async function uploadResume() {
       await runAction('Загружаю и разбираю резюме...', async () => {
@@ -644,6 +712,11 @@ HTML = r"""<!doctype html>
       letter.classList.remove('muted');
       letter.value = draft.letter || '';
       document.getElementById('selectedTitle').textContent = `${draft.title} | ${draft.company || 'Компания не указана'}`;
+      const score = document.getElementById('selectedScore');
+      score.textContent = `${draft.score}/100`;
+      score.style.display = '';
+      document.getElementById('draftStatus').value = draft.status === 'recommended' ? 'recommended' : 'review';
+      document.getElementById('scoreSummary').textContent = `Почему score ${draft.score}/100`;
       const reasons = Array.isArray(draft.reasons) ? draft.reasons : [];
       document.getElementById('scoreReasons').innerHTML = reasons.length
         ? `<strong>Почему score ${draft.score}/100:</strong><ul class="reasons">${reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>`
@@ -679,10 +752,19 @@ HTML = r"""<!doctype html>
         await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/status`, {method: 'POST', body: JSON.stringify({status})});
         const labels = {sent: 'Отмечено отправленным', skipped: 'Вакансия пропущена', recommended: 'Вакансия рекомендована', review: 'Вакансия перенесена на проверку'};
         log(labels[status] || 'Статус обновлен');
-        clearSelectedDraft();
+        const terminal = status === 'sent' || status === 'skipped';
+        if (terminal) clearSelectedDraft();
+        else selectedDraft.status = status;
         await loadDrafts();
         setStatus(labels[status] || 'Статус обновлен.', 'ok');
       });
+    }
+    async function applyDraftStatus() {
+      if (!selectedDraft) {
+        setStatus('Сначала выбери вакансию из списка черновиков.', 'error');
+        return;
+      }
+      await markSelected(document.getElementById('draftStatus').value);
     }
     async function saveLetter() {
       await runAction('Сохраняю письмо...', async () => {
@@ -721,6 +803,8 @@ HTML = r"""<!doctype html>
       letter.value = '';
       letter.classList.add('muted');
       document.getElementById('selectedTitle').textContent = 'Сопроводительное письмо';
+      document.getElementById('selectedScore').style.display = 'none';
+      document.getElementById('scoreSummary').textContent = 'Почему оценка';
       document.getElementById('scoreReasons').textContent = 'Выбери вакансию слева, чтобы увидеть причины оценки.';
     }
     async function loadStatistics() {
@@ -814,6 +898,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._handle("POST")
 
+    def do_DELETE(self) -> None:
+        self._handle("DELETE")
+
     def _handle(self, method: str) -> None:
         try:
             parsed = urlparse(self.path)
@@ -848,6 +935,10 @@ class Handler(BaseHTTPRequestHandler):
             user = str(self._read_json().get("user", ""))
             path = create_user(user)
             self._send_json({"user": path.name})
+            return
+        if len(parts) == 3 and parts[:2] == ["api", "users"] and method == "DELETE":
+            delete_user(parts[2])
+            self._send_json({"ok": True})
             return
         if len(parts) < 3 or parts[0] != "api" or parts[1] != "users":
             raise WebError(HTTPStatus.NOT_FOUND, "Unknown API route")
