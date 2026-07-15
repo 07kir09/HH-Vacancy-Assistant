@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from cover_letter import generate_cover_letter
+from cover_letter import generate_cover_letter_result
 from dashboard import agent_apply_loop, review_drafts
 from hh_api import HHApiClient, HHApiError
 from notifications import send_telegram_digest
@@ -189,16 +189,17 @@ def scan(config: dict[str, Any], profile: dict[str, Any], api: HHApiClient, stor
                     score = score_vacancy(vacancy, profile, filters)
                     if score.blocked or score.score < min_score:
                         continue
-                    letter = generate_cover_letter(vacancy, profile)
+                    letter_result = generate_cover_letter_result(vacancy, profile)
                     recommended_score = int(filters.get("recommended_score", 80))
                     recommendation = "recommended" if score.score >= recommended_score else "review"
                     is_new = storage.upsert_draft(
                         vacancy,
                         score.score,
                         score.reasons,
-                        letter,
+                        letter_result.letter,
                         strategy_name=strategy_name,
                         recommendation=recommendation,
+                        letter_quality=letter_result.quality,
                     )
                     created += 1
                     print(f"{recommendation}: {score.score} | {vacancy.get('name')} | {vacancy_id}")

@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from cover_letter import check_cover_letter_quality
 from hh_api import HHApiError
 from main import load_context, make_api, scan
 from storage import Storage
@@ -227,6 +228,23 @@ HTML = r"""<!doctype html>
     .score-details { border-bottom: 1px solid var(--line); padding-bottom: 10px; }
     .score-details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
     .score-details .summary { margin-top: 8px; }
+    .quality-panel {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #f8fafc;
+      display: grid;
+      gap: 8px;
+    }
+    .quality-panel.ready { border-color: #bbf7d0; background: var(--ok-bg); }
+    .quality-panel.review { border-color: #bfdbfe; background: var(--info-bg); }
+    .quality-panel.needs_revision { border-color: #fed7aa; background: var(--danger-bg); }
+    .quality-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+    .quality-title { font-weight: 650; }
+    .quality-list { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+    .quality-list.warn { color: #9a3412; }
+    .quality-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px; }
+    .quality-check { font-size: 12px; color: var(--muted); }
     .draft-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .draft-actions .primary { margin-right: auto; }
     .status-control { display: flex; gap: 8px; align-items: center; }
@@ -392,10 +410,12 @@ HTML = r"""<!doctype html>
               <summary id="scoreSummary">Почему оценка</summary>
               <div id="scoreReasons" class="summary muted">Выбери вакансию слева, чтобы увидеть причины оценки.</div>
             </details>
+            <div id="letterQuality" class="quality-panel muted">Проверка письма появится после выбора вакансии.</div>
             <textarea id="letter" class="letter-editor muted" placeholder="Выбери вакансию слева."></textarea>
             <div class="draft-actions">
               <button class="primary" onclick="openSelected()">Открыть на HH</button>
               <button onclick="copyLetter()">Копировать</button>
+              <button onclick="checkLetterQuality()">Проверить письмо</button>
               <button onclick="saveLetter()">Сохранить</button>
               <button class="good" onclick="markSelected('sent')">Отправил</button>
             </div>
@@ -721,8 +741,50 @@ HTML = r"""<!doctype html>
       document.getElementById('scoreReasons').innerHTML = reasons.length
         ? `<strong>Почему score ${draft.score}/100:</strong><ul class="reasons">${reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>`
         : `Score: ${draft.score}/100. Подробных причин пока нет.`;
+      renderLetterQuality(draft.letter_quality || null);
       setStatus(`Выбрана вакансия: ${draft.title}.`, 'ok');
       log(`Выбрана вакансия: ${draft.title}`);
+    }
+    function renderLetterQuality(quality) {
+      const box = document.getElementById('letterQuality');
+      if (!quality || typeof quality !== 'object' || !quality.score) {
+        box.className = 'quality-panel muted';
+        box.textContent = 'Проверка письма появится после выбора вакансии или сохранения правок.';
+        return;
+      }
+      const status = ['ready', 'review', 'needs_revision'].includes(quality.status) ? quality.status : 'review';
+      const checks = Array.isArray(quality.checks) ? quality.checks : [];
+      const warnings = Array.isArray(quality.warnings) ? quality.warnings : [];
+      const matched = Array.isArray(quality.matched_requirements) ? quality.matched_requirements : [];
+      box.className = `quality-panel ${status}`;
+      const checksHtml = checks.map(check => {
+        const mark = check.passed ? '+' : '-';
+        return `<div class="quality-check">${mark} ${escapeHtml(check.label || check.id || 'Проверка')}</div>`;
+      }).join('');
+      const warningsHtml = warnings.length
+        ? `<ul class="quality-list warn">${warnings.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+        : '<div class="small muted">Критичных предупреждений нет.</div>';
+      const matchedHtml = matched.length
+        ? `<div class="small muted">Совпадения: ${matched.map(escapeHtml).join(', ')}</div>`
+        : '<div class="small muted">Совпадения с требованиями пока не найдены.</div>';
+      box.innerHTML = `
+        <div class="quality-head">
+          <div class="quality-title">${escapeHtml(quality.label || 'Проверка письма')}</div>
+          <span class="status-tag score-tag">${escapeHtml(quality.score)}/100</span>
+        </div>
+        <div class="quality-checks">${checksHtml}</div>
+        ${matchedHtml}
+        ${warningsHtml}
+      `;
+    }
+    async function saveDraftLetter() {
+      if (!selectedDraft) throw new Error('Сначала выбери вакансию из списка черновиков.');
+      const letter = document.getElementById('letter').value;
+      const data = await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/letter`, {method: 'POST', body: JSON.stringify({letter})});
+      selectedDraft.letter = letter;
+      selectedDraft.letter_quality = data.quality || null;
+      renderLetterQuality(selectedDraft.letter_quality);
+      return selectedDraft.letter_quality;
     }
     async function copyLetter() {
       await runAction('Копирую письмо...', async () => {
@@ -736,6 +798,14 @@ HTML = r"""<!doctype html>
     async function openSelected() {
       await runAction('Открываю отклик...', async () => {
         if (!selectedDraft) throw new Error('Сначала выбери вакансию из списка черновиков.');
+        const quality = await saveDraftLetter();
+        if (quality && quality.status === 'needs_revision') {
+          const confirmed = window.confirm('Проверка письма нашла важные замечания. Открыть отклик на HH всё равно?');
+          if (!confirmed) {
+            setStatus('Открытие отклика отменено. Доработай письмо и запусти проверку еще раз.', 'error');
+            return;
+          }
+        }
         if (navigator.clipboard) {
           await navigator.clipboard.writeText(document.getElementById('letter').value || '');
         }
@@ -768,12 +838,20 @@ HTML = r"""<!doctype html>
     }
     async function saveLetter() {
       await runAction('Сохраняю письмо...', async () => {
+        await saveDraftLetter();
+        setStatus('Письмо сохранено локально.', 'ok');
+        log('Письмо отредактировано, сохранено и проверено');
+      });
+    }
+    async function checkLetterQuality() {
+      await runAction('Проверяю письмо...', async () => {
         if (!selectedDraft) throw new Error('Сначала выбери вакансию из списка черновиков.');
         const letter = document.getElementById('letter').value;
-        await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/letter`, {method: 'POST', body: JSON.stringify({letter})});
-        selectedDraft.letter = letter;
-        setStatus('Письмо сохранено локально.', 'ok');
-        log('Письмо отредактировано и сохранено');
+        const data = await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/quality`, {method: 'POST', body: JSON.stringify({letter})});
+        selectedDraft.letter_quality = data.quality || null;
+        renderLetterQuality(selectedDraft.letter_quality);
+        setStatus(`Проверка письма: ${data.quality.label}, ${data.quality.score}/100.`, data.quality.status === 'needs_revision' ? 'error' : 'ok');
+        log(`Проверка письма: ${data.quality.label}, ${data.quality.score}/100`);
       });
     }
     async function saveFeedback(feedback) {
@@ -806,6 +884,7 @@ HTML = r"""<!doctype html>
       document.getElementById('selectedScore').style.display = 'none';
       document.getElementById('scoreSummary').textContent = 'Почему оценка';
       document.getElementById('scoreReasons').textContent = 'Выбери вакансию слева, чтобы увидеть причины оценки.';
+      renderLetterQuality(null);
     }
     async function loadStatistics() {
       if (!currentUser) return;
@@ -1052,8 +1131,16 @@ class Handler(BaseHTTPRequestHandler):
             data = self._read_json()
             create_user(user)
             storage = Storage(user_dir(user) / "job_apply_bot.db")
-            storage.update_letter(parts[4], str(data.get("letter", "")))
-            self._send_json({"ok": True})
+            quality = _quality_for_draft(user, storage, parts[4], str(data.get("letter", "")))
+            storage.update_letter(parts[4], str(data.get("letter", "")), quality)
+            self._send_json({"ok": True, "quality": quality})
+            return
+        if len(parts) == 6 and parts[3] == "drafts" and parts[5] == "quality" and method == "POST":
+            data = self._read_json()
+            create_user(user)
+            storage = Storage(user_dir(user) / "job_apply_bot.db")
+            quality = _quality_for_draft(user, storage, parts[4], str(data.get("letter", "")))
+            self._send_json({"quality": quality})
             return
         if len(parts) == 6 and parts[3] == "drafts" and parts[5] == "opened" and method == "POST":
             create_user(user)
@@ -1274,11 +1361,35 @@ def _http_status(status_code: int) -> HTTPStatus:
         return HTTPStatus.BAD_GATEWAY
 
 
+def _quality_for_draft(user: str, storage: Storage, vacancy_id: str, letter: str) -> dict:
+    if not letter.strip():
+        raise WebError(HTTPStatus.BAD_REQUEST, "Сопроводительное письмо не должно быть пустым.")
+    row = storage.get_vacancy(vacancy_id)
+    if not row:
+        raise WebError(HTTPStatus.NOT_FOUND, "Черновик вакансии не найден.")
+    try:
+        vacancy = json.loads(row["raw_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        vacancy = {}
+    if not isinstance(vacancy, dict):
+        vacancy = {}
+    if not vacancy.get("name"):
+        vacancy["name"] = row["title"]
+    if not vacancy.get("employer"):
+        vacancy["employer"] = {"name": row["company"]}
+    profile = load_user_profile(user)
+    return check_cover_letter_quality(letter, vacancy, profile)
+
+
 def _row_to_dict(row) -> dict:
     try:
         reasons = json.loads(row["score_reasons_json"] or "[]")
     except (TypeError, json.JSONDecodeError):
         reasons = []
+    try:
+        quality = json.loads(row["letter_quality_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        quality = {}
     return {
         "vacancy_id": row["vacancy_id"],
         "title": row["title"],
@@ -1295,6 +1406,7 @@ def _row_to_dict(row) -> dict:
         "feedback": row["feedback"],
         "notes": row["notes"],
         "opened_at": row["opened_at"],
+        "letter_quality": quality,
     }
 
 

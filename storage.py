@@ -71,6 +71,7 @@ class Storage:
             "notes": "TEXT",
             "opened_at": "TEXT",
             "last_seen_at": "TEXT",
+            "letter_quality_json": "TEXT",
         }
         for name, definition in additions.items():
             if name not in existing:
@@ -121,6 +122,7 @@ class Storage:
         *,
         strategy_name: str = "Основной поиск",
         recommendation: str = "review",
+        letter_quality: dict[str, Any] | None = None,
     ) -> bool:
         vacancy_id = str(vacancy["id"])
         employer = vacancy.get("employer") or {}
@@ -139,9 +141,9 @@ class Storage:
                     vacancy_id, title, company, score, status, alternate_url,
                     apply_url, letter, score_reasons_json, raw_json, error_text,
                     created_at, updated_at, sent_at, search_strategy, recommendation,
-                    feedback, notes, opened_at, last_seen_at
+                    feedback, notes, opened_at, last_seen_at, letter_quality_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
@@ -159,7 +161,8 @@ class Storage:
                     search_strategy = excluded.search_strategy,
                     recommendation = excluded.recommendation,
                     updated_at = excluded.updated_at,
-                    last_seen_at = excluded.last_seen_at
+                    last_seen_at = excluded.last_seen_at,
+                    letter_quality_json = excluded.letter_quality_json
                 """,
                 (
                     vacancy_id,
@@ -180,6 +183,7 @@ class Storage:
                     existing["notes"] if existing else None,
                     existing["opened_at"] if existing else None,
                     now,
+                    json.dumps(letter_quality or {}, ensure_ascii=False),
                 ),
             )
         return is_new
@@ -215,13 +219,13 @@ class Storage:
                 (now, now, vacancy_id),
             )
 
-    def update_letter(self, vacancy_id: str, letter: str) -> None:
+    def update_letter(self, vacancy_id: str, letter: str, letter_quality: dict[str, Any] | None = None) -> None:
         if not letter.strip():
             raise ValueError("Cover letter cannot be empty")
         with self.connect() as conn:
             conn.execute(
-                "UPDATE vacancies SET letter = ?, updated_at = ? WHERE vacancy_id = ?",
-                (letter.strip(), utc_now(), vacancy_id),
+                "UPDATE vacancies SET letter = ?, letter_quality_json = ?, updated_at = ? WHERE vacancy_id = ?",
+                (letter.strip(), json.dumps(letter_quality or {}, ensure_ascii=False), utc_now(), vacancy_id),
             )
 
     def set_feedback(self, vacancy_id: str, feedback: str, notes: str = "") -> None:
