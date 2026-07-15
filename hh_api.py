@@ -86,9 +86,17 @@ class HHApiClient:
         self._set_token(token)
         return token
 
-    def get_application_token(self) -> dict[str, Any]:
+    def get_application_token(self, *, force: bool = False) -> dict[str, Any]:
         if not self.client_id or not self.client_secret:
             raise ValueError("HH_CLIENT_ID and HH_CLIENT_SECRET are required")
+        # HH rejects an early client_credentials refresh with 403. Reuse the
+        # locally stored application token until it is close to expiration.
+        if not force and self.access_token and self.expires_at and time.time() < self.expires_at - 60:
+            return {
+                "access_token": self.access_token,
+                "expires_at": self.expires_at,
+                "expires_in": max(0, int(self.expires_at - time.time())),
+            }
         token = self._token_request(
             {
                 "grant_type": "client_credentials",

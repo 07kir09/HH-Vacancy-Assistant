@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -11,6 +12,7 @@ from typing import Any
 from cover_letter import generate_cover_letter
 from dashboard import agent_apply_loop, review_drafts
 from hh_api import HHApiClient, HHApiError
+from notifications import send_telegram_digest
 from profile_builder import build_profile_from_text
 from resume_parser import extract_text
 from scorer import score_vacancy
@@ -112,61 +114,118 @@ def search_params(config: dict[str, Any], keyword: str, page: int) -> dict[str, 
     return params
 
 
-def scan(config: dict[str, Any], profile: dict[str, Any], api: HHApiClient, storage: Storage) -> None:
+def search_strategies(config: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Return enabled search strategies, keeping old single-search configs valid."""
+    search = config.get("search", {})
+    configured = search.get("strategies")
+    if not isinstance(configured, list) or not configured:
+        return [("Основной поиск", config)]
+
+    result: list[tuple[str, dict[str, Any]]] = []
+    for item in configured:
+        if not isinstance(item, dict) or item.get("enabled", True) is False:
+            continue
+        keywords = item.get("keywords")
+        if not isinstance(keywords, list) or not any(str(value).strip() for value in keywords):
+            continue
+        strategy_config = copy.deepcopy(config)
+        strategy_search = strategy_config.setdefault("search", {})
+        strategy_search["keywords"] = keywords
+        for key in ("areas", "period_days", "per_page", "pages_per_keyword", "currency", "desired_salary", "only_with_salary", "experience", "employment", "schedule", "work_format", "excluded_text"):
+            if key in item:
+                strategy_search[key] = item[key]
+        if isinstance(item.get("filters"), dict):
+            strategy_config.setdefault("filters", {}).update(item["filters"])
+        result.append((str(item.get("name") or "Поисковая стратегия"), strategy_config))
+    return result or [("Основной поиск", config)]
+
+
+def scan(config: dict[str, Any], profile: dict[str, Any], api: HHApiClient, storage: Storage) -> list[dict[str, Any]]:
     if not api.access_token:
         print("No HH application token found. Requesting one with client_credentials...")
         api.get_application_token()
 
-    search = config.get("search", {})
-    filters = config.get("filters", {})
     limits = config.get("limits", {})
-    min_score = int(filters.get("min_score", 65))
     max_drafts = int(limits.get("max_drafts_per_scan", 20))
     delay = float(limits.get("request_delay_seconds", 0.3))
-    pages = int(search.get("pages_per_keyword", 1))
-    keywords = search.get("keywords", [])
     seen_ids: set[str] = set()
     created = 0
+    recommended: list[dict[str, Any]] = []
 
-    for keyword in keywords:
-        for page in range(pages):
-            try:
-                result = api.search_vacancies(search_params(config, keyword, page))
-            except HHApiError as exc:
-                if _is_token_revoked(exc):
-                    print("HH application token is revoked. Requesting a new one...")
-                    api.get_application_token()
-                    try:
-                        result = api.search_vacancies(search_params(config, keyword, page))
-                    except HHApiError as retry_exc:
-                        print(f"Search failed for {keyword}: {retry_exc.status_code}: {retry_exc.payload}", file=sys.stderr)
-                        continue
-                else:
-                    print(f"Search failed for {keyword}: {exc.status_code}: {exc.payload}", file=sys.stderr)
-                    continue
-            for item in result.get("items", []):
-                vacancy_id = str(item.get("id"))
-                if not vacancy_id or vacancy_id in seen_ids or storage.has_terminal_status(vacancy_id):
-                    continue
-                seen_ids.add(vacancy_id)
-                time.sleep(delay)
+    for strategy_name, strategy_config in search_strategies(config):
+        search = strategy_config.get("search", {})
+        filters = strategy_config.get("filters", {})
+        min_score = int(filters.get("min_score", 65))
+        pages = int(search.get("pages_per_keyword", 1))
+        keywords = search.get("keywords", [])
+        print(f"Strategy: {strategy_name}")
+        for keyword in keywords:
+            for page in range(pages):
                 try:
-                    vacancy = api.get_vacancy(vacancy_id)
+                    result = api.search_vacancies(search_params(strategy_config, keyword, page))
                 except HHApiError as exc:
-                    print(f"Vacancy {vacancy_id} failed: {exc.status_code}: {exc.payload}", file=sys.stderr)
-                    continue
-                score = score_vacancy(vacancy, profile, filters)
-                if score.blocked or score.score < min_score:
-                    continue
-                letter = generate_cover_letter(vacancy, profile)
-                storage.upsert_draft(vacancy, score.score, score.reasons, letter)
-                created += 1
-                print(f"Draft: {score.score} | {vacancy.get('name')} | {vacancy_id}")
-                if created >= max_drafts:
-                    print(f"Reached max_drafts_per_scan={max_drafts}")
-                    return
+                    if _is_token_revoked(exc):
+                        print("HH application token is revoked. Requesting a new one...")
+                        api.get_application_token(force=True)
+                        try:
+                            result = api.search_vacancies(search_params(strategy_config, keyword, page))
+                        except HHApiError as retry_exc:
+                            print(f"Search failed for {keyword}: {retry_exc.status_code}: {retry_exc.payload}", file=sys.stderr)
+                            continue
+                    else:
+                        print(f"Search failed for {keyword}: {exc.status_code}: {exc.payload}", file=sys.stderr)
+                        continue
+                for item in result.get("items", []):
+                    vacancy_id = str(item.get("id"))
+                    if not vacancy_id or vacancy_id in seen_ids or storage.has_terminal_status(vacancy_id):
+                        continue
+                    seen_ids.add(vacancy_id)
+                    time.sleep(delay)
+                    try:
+                        vacancy = api.get_vacancy(vacancy_id)
+                    except HHApiError as exc:
+                        print(f"Vacancy {vacancy_id} failed: {exc.status_code}: {exc.payload}", file=sys.stderr)
+                        continue
+                    score = score_vacancy(vacancy, profile, filters)
+                    if score.blocked or score.score < min_score:
+                        continue
+                    letter = generate_cover_letter(vacancy, profile)
+                    recommended_score = int(filters.get("recommended_score", 80))
+                    recommendation = "recommended" if score.score >= recommended_score else "review"
+                    is_new = storage.upsert_draft(
+                        vacancy,
+                        score.score,
+                        score.reasons,
+                        letter,
+                        strategy_name=strategy_name,
+                        recommendation=recommendation,
+                    )
+                    created += 1
+                    print(f"{recommendation}: {score.score} | {vacancy.get('name')} | {vacancy_id}")
+                    if recommendation == "recommended" and is_new:
+                        recommended.append(
+                            {
+                                "title": vacancy.get("name"),
+                                "company": (vacancy.get("employer") or {}).get("name"),
+                                "score": score.score,
+                                "url": vacancy.get("alternate_url"),
+                            }
+                        )
+                    if created >= max_drafts:
+                        print(f"Reached max_drafts_per_scan={max_drafts}")
+                        _send_scan_digest(config, recommended)
+                        return recommended
             time.sleep(delay)
     print(f"Scan complete. Drafts created/updated: {created}")
+    _send_scan_digest(config, recommended)
+    return recommended
+
+
+def _send_scan_digest(config: dict[str, Any], recommended: list[dict[str, Any]]) -> None:
+    try:
+        send_telegram_digest(config, recommended)
+    except RuntimeError as exc:
+        print(f"Notification failed: {exc}", file=sys.stderr)
 
 
 def _is_token_revoked(exc: HHApiError) -> bool:
@@ -242,6 +301,20 @@ def cmd_set_credentials(user_id: str, client_id: str, client_secret: str, contac
     print(f"Saved HH credentials for user '{user_id}'.")
 
 
+def run_scheduled_scan(
+    config: dict[str, Any], profile: dict[str, Any], api: HHApiClient, storage: Storage, interval_minutes: int, once: bool
+) -> None:
+    if interval_minutes < 5:
+        raise ValueError("Schedule interval must be at least 5 minutes")
+    while True:
+        print(time.strftime("%Y-%m-%d %H:%M:%S") + " Scheduled scan started")
+        scan(config, profile, api, storage)
+        if once:
+            return
+        print(f"Next scan in {interval_minutes} minutes. Stop with Ctrl+C.")
+        time.sleep(interval_minutes * 60)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="HH job apply assistant")
     parser.add_argument("--config", default=str(CONFIG_PATH), help="Path to config.yaml")
@@ -254,6 +327,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("app-token", help="Get application token for vacancy search")
     sub.add_parser("me", help="Check legacy authorized HH user")
     sub.add_parser("scan", help="Search vacancies, score them, and save draft applications")
+    schedule = sub.add_parser("schedule", help="Run vacancy scans repeatedly while this command stays open")
+    schedule.add_argument("--interval-minutes", type=int, default=720, help="Interval between scans; minimum 5")
+    schedule.add_argument("--once", action="store_true", help="Run one scheduled scan and exit")
     review = sub.add_parser("review", help="Review draft applications")
     review.add_argument("--send", action="store_true", help="Deprecated: applicant API responses are unsupported by HH")
     review.add_argument("--open", action="store_true", help="Open browser for apply URL when choosing [o]")
@@ -310,6 +386,9 @@ def main() -> None:
         elif args.command == "scan":
             api = make_api(config, storage, "hh_app")
             scan(config, profile, api, storage)
+        elif args.command == "schedule":
+            api = make_api(config, storage, "hh_app")
+            run_scheduled_scan(config, profile, api, storage, args.interval_minutes, args.once)
         elif args.command == "review":
             api = make_api(config, storage, "hh_app")
             review_drafts(

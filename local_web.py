@@ -213,6 +213,14 @@ HTML = r"""<!doctype html>
     th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 9px 6px; vertical-align: top; }
     th { color: var(--muted); font-weight: 600; font-size: 12px; }
     .draft-title { font-weight: 650; }
+    .status-tag { display: inline-block; border-radius: 999px; padding: 3px 7px; font-size: 11px; white-space: nowrap; }
+    .status-tag.recommended { color: #166534; background: #dcfce7; }
+    .status-tag.review, .status-tag.draft { color: #1e40af; background: #dbeafe; }
+    .reasons { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .letter-editor { min-height: 280px; font-family: inherit; font-size: 14px; }
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; }
+    .metric { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: #f8fafc; }
+    .metric-value { font-size: 22px; font-weight: 650; margin-top: 3px; }
     .letter {
       white-space: pre-wrap;
       background: #fff;
@@ -229,6 +237,7 @@ HTML = r"""<!doctype html>
       .app { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
       .grid { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
@@ -264,6 +273,7 @@ HTML = r"""<!doctype html>
         <button class="tab" data-tab="profile" onclick="showTab('profile')">2. Профиль</button>
         <button class="tab" data-tab="config" onclick="showTab('config')">3. Поиск</button>
         <button class="tab" data-tab="drafts" onclick="showTab('drafts')">4. Черновики</button>
+        <button class="tab" data-tab="stats" onclick="showTab('stats')">5. Статистика</button>
       </div>
 
       <section id="setup" class="section active">
@@ -351,23 +361,44 @@ HTML = r"""<!doctype html>
           <div class="panel stack">
             <div class="row">
               <div style="flex: 1">
-                <h2>Черновики откликов</h2>
-                <div class="help">Выбери вакансию, скопируй письмо и открой официальный отклик на hh.ru.</div>
+              <h2>Черновики откликов</h2>
+                <div class="help">Рекомендовано: score выше порога. На проверке: вакансия подходит, но требует твоего решения.</div>
               </div>
               <button onclick="loadDrafts()">Обновить</button>
             </div>
             <div id="draftsTable"></div>
           </div>
           <div class="panel stack">
-            <h2>Сопроводительное письмо</h2>
-            <div id="letter" class="letter muted">Выбери вакансию слева.</div>
+            <h2 id="selectedTitle">Сопроводительное письмо</h2>
+            <div id="scoreReasons" class="summary muted">Выбери вакансию слева, чтобы увидеть причины оценки.</div>
+            <textarea id="letter" class="letter-editor muted" placeholder="Выбери вакансию слева."></textarea>
             <div class="row">
+              <button onclick="saveLetter()">Сохранить письмо</button>
               <button onclick="copyLetter()">Копировать письмо</button>
               <button class="primary" onclick="openSelected()">Открыть отклик</button>
               <button class="good" onclick="markSelected('sent')">Отметить отправленным</button>
               <button class="warn" onclick="markSelected('skipped')">Пропустить</button>
             </div>
+            <div class="row">
+              <button onclick="markSelected('recommended')">Рекомендовать</button>
+              <button onclick="markSelected('review')">На проверку</button>
+              <button onclick="saveFeedback('relevant')">Подходит</button>
+              <button class="warn" onclick="saveFeedback('not_relevant')">Не подходит</button>
+            </div>
           </div>
+        </div>
+      </section>
+
+      <section id="stats" class="section">
+        <div class="panel stack">
+          <div class="row">
+            <div style="flex: 1">
+              <h2>Статистика поиска</h2>
+              <div class="help">Показывает локальную историю выбранного пользователя. Отметки «Не подходит» сохраняются для последующей настройки фильтров.</div>
+            </div>
+            <button onclick="loadStatistics()">Обновить</button>
+          </div>
+          <div id="statsMetrics" class="metrics"></div>
         </div>
       </section>
 
@@ -444,6 +475,11 @@ HTML = r"""<!doctype html>
         setStatus(message, 'error');
         log(`Ошибка: ${message}`);
       });
+      if (id === 'stats') loadStatistics().catch(error => {
+        const message = errorMessage(error);
+        setStatus(message, 'error');
+        log(`Ошибка: ${message}`);
+      });
     }
     async function loadUsers() {
       const data = await api('/api/users');
@@ -502,6 +538,7 @@ HTML = r"""<!doctype html>
       updateResumeSummary(profile.profile);
       updateParseReport(profile.parse_report || null, profile.extracted_text || '');
       await loadDrafts();
+      await loadStatistics();
     }
     async function uploadResume() {
       await runAction('Загружаю и разбираю резюме...', async () => {
@@ -587,13 +624,15 @@ HTML = r"""<!doctype html>
         box.innerHTML = '<div class="empty">Черновиков пока нет. Проверь параметры поиска и нажми "Найти вакансии".</div>';
         return;
       }
+      const labels = {recommended: 'Рекомендовано', review: 'На проверке', draft: 'На проверке', error: 'Ошибка'};
       const rows = drafts.map((d, i) => `<tr>
         <td>${i + 1}</td>
         <td><div class="draft-title">${escapeHtml(d.title)}</div><div class="small muted">${escapeHtml(d.company || '')}</div></td>
         <td>${d.score}</td>
+        <td><span class="status-tag ${escapeHtml(d.status)}">${escapeHtml(labels[d.status] || d.status)}</span></td>
         <td><button onclick="selectDraftByIndex(${i})">Выбрать</button></td>
       </tr>`).join('');
-      box.innerHTML = `<table><thead><tr><th>#</th><th>Вакансия</th><th>Score</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+      box.innerHTML = `<table><thead><tr><th>#</th><th>Вакансия</th><th>Score</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
     }
     function selectDraftByIndex(index) {
       selectDraft(drafts[index]);
@@ -601,8 +640,14 @@ HTML = r"""<!doctype html>
     function selectDraft(draft) {
       if (!draft) return;
       selectedDraft = draft;
-      document.getElementById('letter').classList.remove('muted');
-      document.getElementById('letter').textContent = draft.letter || '';
+      const letter = document.getElementById('letter');
+      letter.classList.remove('muted');
+      letter.value = draft.letter || '';
+      document.getElementById('selectedTitle').textContent = `${draft.title} | ${draft.company || 'Компания не указана'}`;
+      const reasons = Array.isArray(draft.reasons) ? draft.reasons : [];
+      document.getElementById('scoreReasons').innerHTML = reasons.length
+        ? `<strong>Почему score ${draft.score}/100:</strong><ul class="reasons">${reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>`
+        : `Score: ${draft.score}/100. Подробных причин пока нет.`;
       setStatus(`Выбрана вакансия: ${draft.title}.`, 'ok');
       log(`Выбрана вакансия: ${draft.title}`);
     }
@@ -610,7 +655,7 @@ HTML = r"""<!doctype html>
       await runAction('Копирую письмо...', async () => {
         if (!selectedDraft) throw new Error('Сначала выбери вакансию из списка черновиков.');
         if (!navigator.clipboard) throw new Error('Браузер не дал доступ к clipboard. Выдели письмо вручную и скопируй.');
-        await navigator.clipboard.writeText(selectedDraft.letter || '');
+        await navigator.clipboard.writeText(document.getElementById('letter').value || '');
         setStatus('Письмо скопировано.', 'ok');
         log('Письмо скопировано');
       });
@@ -619,10 +664,11 @@ HTML = r"""<!doctype html>
       await runAction('Открываю отклик...', async () => {
         if (!selectedDraft) throw new Error('Сначала выбери вакансию из списка черновиков.');
         if (navigator.clipboard) {
-          await navigator.clipboard.writeText(selectedDraft.letter || '');
+          await navigator.clipboard.writeText(document.getElementById('letter').value || '');
         }
         const url = selectedDraft.apply_url || selectedDraft.alternate_url;
         if (!url) throw new Error('У вакансии нет ссылки для отклика.');
+        await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/opened`, {method: 'POST'});
         window.open(url, '_blank', 'noopener');
         setStatus('Страница отклика открыта. Вставь письмо на hh.ru и отправь вручную.', 'ok');
       });
@@ -631,17 +677,66 @@ HTML = r"""<!doctype html>
       await runAction('Обновляю статус черновика...', async () => {
         if (!selectedDraft) throw new Error('Сначала выбери вакансию из списка черновиков.');
         await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/status`, {method: 'POST', body: JSON.stringify({status})});
-        log(status === 'sent' ? 'Отмечено отправленным' : 'Вакансия пропущена');
+        const labels = {sent: 'Отмечено отправленным', skipped: 'Вакансия пропущена', recommended: 'Вакансия рекомендована', review: 'Вакансия перенесена на проверку'};
+        log(labels[status] || 'Статус обновлен');
         clearSelectedDraft();
         await loadDrafts();
-        setStatus(status === 'sent' ? 'Вакансия отмечена отправленной.' : 'Вакансия пропущена.', 'ok');
+        setStatus(labels[status] || 'Статус обновлен.', 'ok');
+      });
+    }
+    async function saveLetter() {
+      await runAction('Сохраняю письмо...', async () => {
+        if (!selectedDraft) throw new Error('Сначала выбери вакансию из списка черновиков.');
+        const letter = document.getElementById('letter').value;
+        await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/letter`, {method: 'POST', body: JSON.stringify({letter})});
+        selectedDraft.letter = letter;
+        setStatus('Письмо сохранено локально.', 'ok');
+        log('Письмо отредактировано и сохранено');
+      });
+    }
+    async function saveFeedback(feedback) {
+      await runAction('Сохраняю обратную связь...', async () => {
+        if (!selectedDraft) throw new Error('Сначала выбери вакансию из списка черновиков.');
+        const prompt = feedback === 'relevant'
+          ? 'Что особенно подходит в этой вакансии? Это поле необязательное.'
+          : 'Почему вакансия не подходит? Это поле необязательное.';
+        const notes = window.prompt(prompt) || '';
+        await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/feedback`, {method: 'POST', body: JSON.stringify({feedback, notes})});
+        if (feedback === 'not_relevant') {
+          await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/status`, {method: 'POST', body: JSON.stringify({status: 'skipped'})});
+          clearSelectedDraft();
+          await loadDrafts();
+        } else if (feedback === 'relevant') {
+          await api(`/api/users/${currentUser}/drafts/${selectedDraft.vacancy_id}/status`, {method: 'POST', body: JSON.stringify({status: 'recommended'})});
+          await loadDrafts();
+        }
+        setStatus(feedback === 'not_relevant' ? 'Вакансия пропущена, причина сохранена.' : 'Отметка сохранена. Вакансия рекомендована.', 'ok');
+        log('Сохранена обратная связь по вакансии');
+        await loadStatistics();
       });
     }
     function clearSelectedDraft() {
       selectedDraft = null;
       const letter = document.getElementById('letter');
-      letter.textContent = 'Выбери вакансию слева.';
+      letter.value = '';
       letter.classList.add('muted');
+      document.getElementById('selectedTitle').textContent = 'Сопроводительное письмо';
+      document.getElementById('scoreReasons').textContent = 'Выбери вакансию слева, чтобы увидеть причины оценки.';
+    }
+    async function loadStatistics() {
+      if (!currentUser) return;
+      const data = await api(`/api/users/${currentUser}/statistics`);
+      const counts = data.statistics.counts || {};
+      const feedback = data.statistics.feedback || {};
+      const metrics = [
+        ['Рекомендовано', counts.recommended || 0],
+        ['На проверке', (counts.review || 0) + (counts.draft || 0)],
+        ['Отправлено за 7 дней', data.statistics.sent_last_7_days || 0],
+        ['Средний score', data.statistics.average_score || 0],
+        ['Не подошло', feedback.not_relevant || 0],
+        ['Подтверждено', feedback.relevant || 0]
+      ];
+      document.getElementById('statsMetrics').innerHTML = metrics.map(([label, value]) => `<div class="metric"><div class="small muted">${escapeHtml(label)}</div><div class="metric-value">${escapeHtml(value)}</div></div>`).join('');
     }
     function updateResumeSummary(profile) {
       const name = profile.name || 'имя не найдено';
@@ -857,6 +952,31 @@ class Handler(BaseHTTPRequestHandler):
             storage = Storage(user_dir(user) / "job_apply_bot.db")
             self._send_json({"drafts": [_row_to_dict(row) for row in storage.list_drafts(limit=100)]})
             return
+        if len(parts) == 4 and parts[3] == "statistics" and method == "GET":
+            create_user(user)
+            storage = Storage(user_dir(user) / "job_apply_bot.db")
+            self._send_json({"statistics": storage.statistics()})
+            return
+        if len(parts) == 6 and parts[3] == "drafts" and parts[5] == "letter" and method == "POST":
+            data = self._read_json()
+            create_user(user)
+            storage = Storage(user_dir(user) / "job_apply_bot.db")
+            storage.update_letter(parts[4], str(data.get("letter", "")))
+            self._send_json({"ok": True})
+            return
+        if len(parts) == 6 and parts[3] == "drafts" and parts[5] == "opened" and method == "POST":
+            create_user(user)
+            storage = Storage(user_dir(user) / "job_apply_bot.db")
+            storage.mark_opened(parts[4])
+            self._send_json({"ok": True})
+            return
+        if len(parts) == 6 and parts[3] == "drafts" and parts[5] == "feedback" and method == "POST":
+            data = self._read_json()
+            create_user(user)
+            storage = Storage(user_dir(user) / "job_apply_bot.db")
+            storage.set_feedback(parts[4], str(data.get("feedback", "")), str(data.get("notes", "")))
+            self._send_json({"ok": True})
+            return
         if len(parts) == 6 and parts[3] == "drafts" and parts[5] == "status" and method == "POST":
             vacancy_id = parts[4]
             status = str(self._read_json().get("status", ""))
@@ -864,7 +984,7 @@ class Handler(BaseHTTPRequestHandler):
             storage = Storage(user_dir(user) / "job_apply_bot.db")
             if status == "sent":
                 storage.mark_sent(vacancy_id)
-            elif status in {"skipped", "draft"}:
+            elif status in {"skipped", "draft", "review", "recommended"}:
                 storage.mark_status(vacancy_id, status)
             else:
                 raise WebError(HTTPStatus.BAD_REQUEST, "Unsupported status")
@@ -966,8 +1086,18 @@ def _validate_user_agent(user_agent: str) -> None:
 
 
 def _validate_search_config(config: dict) -> None:
-    keywords = config.get("search", {}).get("keywords", [])
-    if not isinstance(keywords, list) or not any(str(item).strip() for item in keywords):
+    search = config.get("search", {})
+    keywords = search.get("keywords", [])
+    strategies = search.get("strategies", [])
+    has_keywords = isinstance(keywords, list) and any(str(item).strip() for item in keywords)
+    has_strategy = isinstance(strategies, list) and any(
+        isinstance(item, dict)
+        and item.get("enabled", True) is not False
+        and isinstance(item.get("keywords"), list)
+        and any(str(word).strip() for word in item["keywords"])
+        for item in strategies
+    )
+    if not has_keywords and not has_strategy:
         raise WebError(HTTPStatus.BAD_REQUEST, "В параметрах поиска нет search.keywords.")
 
 
@@ -1054,6 +1184,10 @@ def _http_status(status_code: int) -> HTTPStatus:
 
 
 def _row_to_dict(row) -> dict:
+    try:
+        reasons = json.loads(row["score_reasons_json"] or "[]")
+    except (TypeError, json.JSONDecodeError):
+        reasons = []
     return {
         "vacancy_id": row["vacancy_id"],
         "title": row["title"],
@@ -1064,6 +1198,12 @@ def _row_to_dict(row) -> dict:
         "apply_url": row["apply_url"],
         "letter": row["letter"],
         "error_text": row["error_text"],
+        "reasons": reasons,
+        "search_strategy": row["search_strategy"],
+        "recommendation": row["recommendation"],
+        "feedback": row["feedback"],
+        "notes": row["notes"],
+        "opened_at": row["opened_at"],
     }
 
 

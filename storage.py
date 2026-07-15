@@ -58,6 +58,23 @@ class Storage:
                 )
                 """
             )
+            self._ensure_vacancy_columns(conn)
+
+    @staticmethod
+    def _ensure_vacancy_columns(conn: sqlite3.Connection) -> None:
+        """Add fields introduced after the first local database version."""
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(vacancies)").fetchall()}
+        additions = {
+            "search_strategy": "TEXT",
+            "recommendation": "TEXT NOT NULL DEFAULT 'review'",
+            "feedback": "TEXT",
+            "notes": "TEXT",
+            "opened_at": "TEXT",
+            "last_seen_at": "TEXT",
+        }
+        for name, definition in additions.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE vacancies ADD COLUMN {name} {definition}")
 
     def save_token(self, provider: str, token: dict[str, Any]) -> None:
         payload = json.dumps(token, ensure_ascii=False)
@@ -101,43 +118,55 @@ class Storage:
         score: int,
         reasons: list[str],
         letter: str,
-    ) -> None:
+        *,
+        strategy_name: str = "Основной поиск",
+        recommendation: str = "review",
+    ) -> bool:
         vacancy_id = str(vacancy["id"])
         employer = vacancy.get("employer") or {}
         now = utc_now()
         with self.connect() as conn:
             existing = conn.execute(
-                "SELECT status FROM vacancies WHERE vacancy_id = ?",
+                "SELECT status, feedback, notes, opened_at FROM vacancies WHERE vacancy_id = ?",
                 (vacancy_id,),
             ).fetchone()
             if existing and existing["status"] in {"sent", "skipped", "blocked"}:
-                return
+                return False
+            is_new = existing is None
             conn.execute(
                 """
                 INSERT INTO vacancies(
                     vacancy_id, title, company, score, status, alternate_url,
                     apply_url, letter, score_reasons_json, raw_json, error_text,
-                    created_at, updated_at, sent_at
+                    created_at, updated_at, sent_at, search_strategy, recommendation,
+                    feedback, notes, opened_at, last_seen_at
                 )
-                VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id) DO UPDATE SET
                     title = excluded.title,
                     company = excluded.company,
                     score = excluded.score,
-                    status = 'draft',
+                    status = CASE
+                        WHEN vacancies.status IN ('sent', 'skipped', 'blocked') THEN vacancies.status
+                        ELSE excluded.status
+                    END,
                     alternate_url = excluded.alternate_url,
                     apply_url = excluded.apply_url,
                     letter = excluded.letter,
                     score_reasons_json = excluded.score_reasons_json,
                     raw_json = excluded.raw_json,
                     error_text = NULL,
-                    updated_at = excluded.updated_at
+                    search_strategy = excluded.search_strategy,
+                    recommendation = excluded.recommendation,
+                    updated_at = excluded.updated_at,
+                    last_seen_at = excluded.last_seen_at
                 """,
                 (
                     vacancy_id,
                     vacancy.get("name", ""),
                     employer.get("name", ""),
                     score,
+                    recommendation,
                     vacancy.get("alternate_url"),
                     vacancy.get("apply_alternate_url"),
                     letter,
@@ -145,8 +174,15 @@ class Storage:
                     json.dumps(vacancy, ensure_ascii=False),
                     now,
                     now,
+                    strategy_name,
+                    recommendation,
+                    existing["feedback"] if existing else None,
+                    existing["notes"] if existing else None,
+                    existing["opened_at"] if existing else None,
+                    now,
                 ),
             )
+        return is_new
 
     def mark_status(self, vacancy_id: str, status: str, error_text: str | None = None) -> None:
         with self.connect() as conn:
@@ -171,6 +207,32 @@ class Storage:
                 (now, now, vacancy_id),
             )
 
+    def mark_opened(self, vacancy_id: str) -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE vacancies SET opened_at = ?, updated_at = ? WHERE vacancy_id = ?",
+                (now, now, vacancy_id),
+            )
+
+    def update_letter(self, vacancy_id: str, letter: str) -> None:
+        if not letter.strip():
+            raise ValueError("Cover letter cannot be empty")
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE vacancies SET letter = ?, updated_at = ? WHERE vacancy_id = ?",
+                (letter.strip(), utc_now(), vacancy_id),
+            )
+
+    def set_feedback(self, vacancy_id: str, feedback: str, notes: str = "") -> None:
+        if feedback not in {"relevant", "not_relevant", "neutral"}:
+            raise ValueError("Unsupported feedback")
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE vacancies SET feedback = ?, notes = ?, updated_at = ? WHERE vacancy_id = ?",
+                (feedback, notes.strip()[:1000] or None, utc_now(), vacancy_id),
+            )
+
     def count_sent_today(self) -> int:
         today = datetime.now(timezone.utc).date().isoformat()
         with self.connect() as conn:
@@ -190,13 +252,39 @@ class Storage:
                 """
                 SELECT *
                 FROM vacancies
-                WHERE status IN ('draft', 'error')
-                ORDER BY score DESC, updated_at DESC
+                WHERE status IN ('recommended', 'review', 'draft', 'error')
+                ORDER BY CASE status WHEN 'recommended' THEN 0 WHEN 'review' THEN 1 ELSE 2 END,
+                         score DESC, updated_at DESC
                 LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
         return list(rows)
+
+    def statistics(self) -> dict[str, Any]:
+        with self.connect() as conn:
+            counts = {
+                row["status"]: int(row["count"])
+                for row in conn.execute(
+                    "SELECT status, COUNT(*) AS count FROM vacancies GROUP BY status"
+                ).fetchall()
+            }
+            feedback = {
+                row["feedback"]: int(row["count"])
+                for row in conn.execute(
+                    "SELECT feedback, COUNT(*) AS count FROM vacancies WHERE feedback IS NOT NULL GROUP BY feedback"
+                ).fetchall()
+            }
+            average = conn.execute("SELECT AVG(score) AS value FROM vacancies").fetchone()["value"]
+            sent_week = conn.execute(
+                "SELECT COUNT(*) AS count FROM vacancies WHERE status = 'sent' AND sent_at >= datetime('now', '-7 days')"
+            ).fetchone()["count"]
+        return {
+            "counts": counts,
+            "feedback": feedback,
+            "average_score": round(float(average or 0), 1),
+            "sent_last_7_days": int(sent_week or 0),
+        }
 
     def list_recent(self, limit: int = 20) -> list[sqlite3.Row]:
         with self.connect() as conn:

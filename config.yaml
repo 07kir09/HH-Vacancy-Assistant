@@ -37,9 +37,19 @@ search:
     - "remote"
     - "fullDay"
   excluded_text: "java,c++,c#,php,1c,bitrix,devops,qa,tester,support"
+  # Optional independent strategies. Each one can override search fields and filters.
+  # strategies:
+  #   - name: "Product analytics"
+  #     keywords: ["Product Analyst", "Product Data Analyst"]
+  #     filters:
+  #       min_score: 75
+  #   - name: "Data analytics"
+  #     keywords: ["Data Analyst", "BI Analyst"]
+  #     enabled: true
 
 filters:
   min_score: 65
+  recommended_score: 80
   max_required_years: 4
   block_already_applied: true
   block_archived: true
@@ -89,3 +99,10 @@ limits:
   max_drafts_per_scan: 20
   max_sends_per_day: 5
   request_delay_seconds: 0.3
+
+# Telegram is optional. Keep enabled: false until you create a bot and learn your chat_id.
+notifications:
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
