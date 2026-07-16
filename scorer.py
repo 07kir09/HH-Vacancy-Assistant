@@ -126,6 +126,52 @@ def has_relocation_signal(text: str) -> bool:
     return any(marker in text for marker in ["релокац", "relocation", "переезд", "relocate"])
 
 
+def employer_text(vacancy: dict[str, Any]) -> str:
+    employer = vacancy.get("employer") or {}
+    return norm(" ".join([str(employer.get("name") or ""), strip_html(vacancy.get("description"))]))
+
+
+def matches_blocked_company(vacancy: dict[str, Any], blocked_companies: list[str]) -> str | None:
+    company = norm(field_name(vacancy.get("employer")))
+    for value in blocked_companies:
+        needle = norm(str(value))
+        if needle and needle in company:
+            return str(value)
+    return None
+
+
+def is_recruiting_agency(vacancy: dict[str, Any]) -> bool:
+    text = employer_text(vacancy)
+    agency_markers = [
+        "кадровое агентство",
+        "рекрутинговое агентство",
+        "агентство по подбору",
+        "подбор персонала",
+        "поиск и подбор персонала",
+        "recruitment agency",
+        "staffing agency",
+        "hr agency",
+        "аутстаффинг",
+        "аутсорсинг персонала",
+    ]
+    return any(marker in text for marker in agency_markers)
+
+
+def required_english_level(text: str) -> str | None:
+    levels = [
+        ("c2", [r"\bc2\b", "proficiency"]),
+        ("c1", [r"\bc1\b", "advanced", "продвинут"]),
+        ("b2", [r"\bb2\b", "upper-intermediate", "upper intermediate", "выше среднего"]),
+        ("b1", [r"\bb1\b", "intermediate", "средний уровень"]),
+        ("a2", [r"\ba2\b", "pre-intermediate", "ниже среднего", "базовый уровень"]),
+        ("a1", [r"\ba1\b", "elementary", "начальный уровень"]),
+    ]
+    for level, markers in levels:
+        if any(re.search(marker, text) if marker.startswith("\\b") else marker in text for marker in markers):
+            return level
+    return None
+
+
 def score_vacancy(
     vacancy: dict[str, Any],
     profile: dict[str, Any],
@@ -143,6 +189,12 @@ def score_vacancy(
     if filters.get("block_tests", False) and vacancy.get("has_test"):
         return ScoreResult(0, ["Исключено: в вакансии есть тестовое задание."], True)
 
+    blocked_company = matches_blocked_company(vacancy, filters.get("blocked_companies", []))
+    if blocked_company:
+        return ScoreResult(0, [f"Исключено: работодатель находится в стоп-листе ({blocked_company})."], True)
+    if filters.get("block_recruiting_agencies", True) and is_recruiting_agency(vacancy):
+        return ScoreResult(0, ["Исключено: вакансия похожа на объявление кадрового агентства."], True)
+
     negative_hits = contains_any(text, filters.get("negative_keywords", []))
     if negative_hits:
         return ScoreResult(0, [f"Исключено по стоп-словам: {', '.join(negative_hits[:5])}."], True)
@@ -158,6 +210,14 @@ def score_vacancy(
     if experience_id in {"noExperience", "between1And3", "between3And6"}:
         score += 10
         reasons.append("Опыт: диапазон вакансии соответствует заданному уровню.")
+
+    candidate_english = norm(str(filters.get("english_level") or ""))
+    vacancy_english = required_english_level(text)
+    english_order = {"a1": 1, "a2": 2, "b1": 3, "b2": 4, "c1": 5, "c2": 6}
+    if candidate_english in english_order and vacancy_english:
+        if english_order[vacancy_english] > english_order[candidate_english]:
+            return ScoreResult(0, [f"Исключено: вакансия требует английский {vacancy_english.upper()}, выше указанного уровня."], True)
+        reasons.append(f"Английский: требование {vacancy_english.upper()} соответствует указанному уровню.")
 
     target_hits = contains_any(title, filters.get("target_titles", []))
     if target_hits:

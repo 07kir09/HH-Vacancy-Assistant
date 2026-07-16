@@ -1,0 +1,17 @@
+{
+  "name": "",
+  "hh_resume_id": "",
+  "profile_reviewed": false,
+  "target_roles": [],
+  "city": "",
+  "desired_salary": 0,
+  "experience_summary": "",
+  "skills": [],
+  "strengths": [],
+  "links": {},
+  "cover_letter": {
+    "language": "ru",
+    "tone": "concise",
+    "custom_intro": ""
+  }
+}

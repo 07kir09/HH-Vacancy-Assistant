@@ -57,6 +57,10 @@ filters:
   allow_no_salary: true
   allow_remote: true
   allow_relocation: true
+  # Optional filters managed from the web questionnaire.
+  english_level: ""
+  blocked_companies: []
+  block_recruiting_agencies: true
   allowed_area_ids:
     - "1"
   target_titles:

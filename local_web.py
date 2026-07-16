@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlparse
 from cover_letter import check_cover_letter_quality
 from hh_api import HHApiError
 from main import load_context, make_api, scan
+from search_preferences import apply_preferences, form_options, preferences_from_config
 from storage import Storage
 from users import (
     create_user,
@@ -194,6 +195,34 @@ HTML = r"""<!doctype html>
       max-height: 320px;
       background: #f8fafc;
     }
+    .preferences-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .preferences-grid .full { grid-column: 1 / -1; }
+    .option-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px 12px;
+      padding-top: 2px;
+    }
+    .option-list label, .radio-list label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      color: var(--text);
+      font-size: 13px;
+    }
+    .option-list input, .radio-list input {
+      width: auto;
+      margin: 0;
+    }
+    .radio-list { display: flex; flex-wrap: wrap; gap: 7px 14px; padding-top: 4px; }
+    .compact-textarea { min-height: 82px; font-family: inherit; font-size: 13px; }
+    .advanced-config { border-top: 1px solid var(--line); padding-top: 12px; }
+    .advanced-config summary { cursor: pointer; color: var(--muted); }
     .empty {
       border: 1px dashed #b7c3d0;
       border-radius: 8px;
@@ -271,6 +300,8 @@ HTML = r"""<!doctype html>
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
       .grid { grid-template-columns: 1fr; }
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .preferences-grid { grid-template-columns: 1fr; }
+      .preferences-grid .full { grid-column: auto; }
     }
   </style>
 </head>
@@ -379,13 +410,75 @@ HTML = r"""<!doctype html>
         <div class="panel stack">
           <div class="row">
             <div style="flex: 1">
-              <h2>Параметры поиска</h2>
-              <div class="help">Главные поля: search.keywords, search.desired_salary, filters.min_score, filters.positive_keywords и filters.negative_keywords.</div>
+              <h2>Настройки поиска</h2>
+              <div class="help">Заполни анкету, затем сохрани и запусти поиск. Все поля применяются только к выбранному пользователю.</div>
             </div>
-            <button class="primary" onclick="saveConfig()">Сохранить поиск</button>
+            <button class="primary" onclick="savePreferences()">Сохранить настройки</button>
             <button class="good" onclick="scan()">Найти вакансии</button>
           </div>
-          <textarea id="configText" placeholder="Здесь будет YAML-конфиг поиска."></textarea>
+          <div class="preferences-grid">
+            <div class="full">
+              <label class="required" for="searchRoles">Роли и ключевые слова</label>
+              <textarea id="searchRoles" class="compact-textarea" placeholder="Например: Data Analyst, Product Analyst, SQL"></textarea>
+              <div class="help">Через запятую или с новой строки. По этим фразам HH будет искать вакансии.</div>
+            </div>
+            <div class="full">
+              <label>Города</label>
+              <div id="cityOptions" class="option-list"></div>
+              <div class="help">Не выбирай города, если готов рассматривать вакансии по всей России. Удаленные вакансии учитываются отдельно.</div>
+            </div>
+            <div>
+              <label for="desiredSalary">Желаемая зарплата, руб./мес.</label>
+              <input id="desiredSalary" type="number" min="0" step="1000" placeholder="Например: 180000" />
+            </div>
+            <div>
+              <label for="englishLevel">Твой уровень английского</label>
+              <select id="englishLevel"></select>
+              <div class="help">Вакансии с явно указанным уровнем выше выбранного будут исключены.</div>
+            </div>
+            <div>
+              <label>Формат работы</label>
+              <div class="radio-list">
+                <label><input type="radio" name="workFormat" value="any" checked /> Любой</label>
+                <label><input type="radio" name="workFormat" value="remote" /> Удаленка / гибрид</label>
+                <label><input type="radio" name="workFormat" value="office" /> Только офис</label>
+              </div>
+            </div>
+            <div>
+              <label>Дополнительные условия</label>
+              <div class="option-list">
+                <label><input id="onlyWithSalary" type="checkbox" /> Только с указанной зарплатой</label>
+                <label><input id="allowRelocation" type="checkbox" /> Готов к релокации</label>
+                <label><input id="blockAgencies" type="checkbox" /> Исключать кадровые агентства</label>
+              </div>
+            </div>
+            <div>
+              <label>Требуемый опыт</label>
+              <div id="experienceOptions" class="option-list"></div>
+            </div>
+            <div>
+              <label>Тип занятости</label>
+              <div id="employmentOptions" class="option-list"></div>
+            </div>
+            <div>
+              <label for="blockedCompanies">Стоп-компании</label>
+              <textarea id="blockedCompanies" class="compact-textarea" placeholder="Например: Компания А, Агентство Б"></textarea>
+              <div class="help">Вакансии, где название работодателя содержит это значение, не попадут в черновики.</div>
+            </div>
+            <div>
+              <label for="negativeKeywords">Стоп-слова</label>
+              <textarea id="negativeKeywords" class="compact-textarea" placeholder="Например: Java, DevOps, QA"></textarea>
+              <div class="help">Вакансии с этими словами в названии или описании будут исключены.</div>
+            </div>
+          </div>
+          <details class="advanced-config">
+            <summary>Расширенные настройки YAML</summary>
+            <div class="help">Нужны только для стратегий поиска, лимитов, Telegram и тонкой настройки score. После ручного изменения YAML сохрани его этой кнопкой, чтобы обновить анкету.</div>
+            <div class="row" style="margin: 10px 0">
+              <button onclick="saveConfig()">Сохранить YAML</button>
+            </div>
+            <textarea id="configText" placeholder="Здесь будет YAML-конфиг поиска."></textarea>
+          </details>
         </div>
       </section>
 
@@ -459,6 +552,7 @@ HTML = r"""<!doctype html>
     let currentUser = null;
     let selectedDraft = null;
     let drafts = [];
+    let preferenceOptions = {cities: [], experience: [], employment: [], english: []};
     const logEl = document.getElementById('log');
     const statusEl = document.getElementById('status');
     const currentUserEl = document.getElementById('currentUser');
@@ -605,6 +699,7 @@ HTML = r"""<!doctype html>
       const config = await api(`/api/users/${currentUser}/config`);
       document.getElementById('profileText').value = JSON.stringify(profile.profile, null, 2);
       document.getElementById('configText').value = config.config;
+      await loadPreferences();
       const email = ((profile.profile.links || {}).email || '').trim();
       if (email && !document.getElementById('contactEmail').value) {
         document.getElementById('contactEmail').value = email;
@@ -621,6 +716,7 @@ HTML = r"""<!doctype html>
       tokenSummaryEl.textContent = 'Выбери пользователя, чтобы настроить доступ к HH API.';
       document.getElementById('profileText').value = '';
       document.getElementById('configText').value = '';
+      clearPreferences();
       document.getElementById('contactEmail').value = '';
       document.getElementById('clientId').value = '';
       document.getElementById('clientSecret').value = '';
@@ -640,6 +736,7 @@ HTML = r"""<!doctype html>
         document.getElementById('profileText').value = JSON.stringify(savedProfile.profile, null, 2);
         const config = await api(`/api/users/${currentUser}/config`);
         document.getElementById('configText').value = config.config;
+        await loadPreferences();
         updateResumeSummary(savedProfile.profile);
         updateParseReport(data.parse_report, data.extracted_text);
         const kind = data.parse_report && data.parse_report.score >= 70 ? 'ok' : 'error';
@@ -663,9 +760,108 @@ HTML = r"""<!doctype html>
     async function saveConfig() {
       await runAction('Сохраняю параметры поиска...', async () => {
         requireUser();
-        await api(`/api/users/${currentUser}/config`, {method: 'POST', body: JSON.stringify({config: document.getElementById('configText').value})});
-        setStatus('Параметры поиска сохранены.', 'ok');
+        const data = await api(`/api/users/${currentUser}/config`, {method: 'POST', body: JSON.stringify({config: document.getElementById('configText').value})});
+        document.getElementById('configText').value = data.config;
+        populatePreferences(data.preferences, data.options);
+        setStatus('YAML сохранен, анкета поиска обновлена.', 'ok');
         log('Конфиг поиска сохранен');
+      });
+    }
+    function selectedValues(name) {
+      return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(input => input.value);
+    }
+    function setSelectedValues(name, values) {
+      const selected = new Set(values || []);
+      document.querySelectorAll(`input[name="${name}"]`).forEach(input => {
+        input.checked = selected.has(input.value);
+      });
+    }
+    function renderPreferenceOptions(containerId, name, options) {
+      const box = document.getElementById(containerId);
+      box.innerHTML = '';
+      (options || []).forEach(option => {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.name = name;
+        input.value = option.id;
+        const text = document.createTextNode(option.name);
+        label.append(input, text);
+        box.appendChild(label);
+      });
+    }
+    function setRadioValue(name, value) {
+      const radio = document.querySelector(`input[name="${name}"][value="${value}"]`)
+        || document.querySelector(`input[name="${name}"][value="any"]`);
+      if (radio) radio.checked = true;
+    }
+    function joinLines(values) {
+      return (values || []).join('\n');
+    }
+    function splitLines(value) {
+      return String(value || '').split(/[\n,]/).map(item => item.trim()).filter(Boolean);
+    }
+    function populatePreferences(preferences, options) {
+      preferenceOptions = options || preferenceOptions;
+      renderPreferenceOptions('cityOptions', 'searchCity', preferenceOptions.cities);
+      renderPreferenceOptions('experienceOptions', 'searchExperience', preferenceOptions.experience);
+      renderPreferenceOptions('employmentOptions', 'searchEmployment', preferenceOptions.employment);
+      const english = document.getElementById('englishLevel');
+      english.innerHTML = '';
+      (preferenceOptions.english || []).forEach(option => {
+        const item = document.createElement('option');
+        item.value = option.id;
+        item.textContent = option.name;
+        english.appendChild(item);
+      });
+      const values = preferences || {};
+      document.getElementById('searchRoles').value = joinLines(values.roles);
+      document.getElementById('desiredSalary').value = values.desired_salary || '';
+      document.getElementById('onlyWithSalary').checked = !!values.only_with_salary;
+      document.getElementById('allowRelocation').checked = values.allow_relocation !== false;
+      document.getElementById('blockAgencies').checked = values.block_recruiting_agencies !== false;
+      document.getElementById('englishLevel').value = values.english_level || '';
+      document.getElementById('blockedCompanies').value = joinLines(values.blocked_companies);
+      document.getElementById('negativeKeywords').value = joinLines(values.negative_keywords);
+      setSelectedValues('searchCity', values.areas);
+      setSelectedValues('searchExperience', values.experience);
+      setSelectedValues('searchEmployment', values.employment);
+      setRadioValue('workFormat', values.work_format || 'any');
+    }
+    async function loadPreferences() {
+      if (!currentUser) return;
+      const data = await api(`/api/users/${currentUser}/preferences`);
+      populatePreferences(data.preferences, data.options);
+    }
+    function clearPreferences() {
+      populatePreferences({}, {cities: [], experience: [], employment: [], english: []});
+    }
+    async function savePreferences() {
+      await runAction('Сохраняю настройки поиска...', async () => {
+        requireUser();
+        const data = await api(`/api/users/${currentUser}/preferences`, {
+          method: 'POST',
+          body: JSON.stringify({preferences: {
+            roles: splitLines(document.getElementById('searchRoles').value),
+            areas: selectedValues('searchCity'),
+            desired_salary: document.getElementById('desiredSalary').value,
+            only_with_salary: document.getElementById('onlyWithSalary').checked,
+            work_format: document.querySelector('input[name="workFormat"]:checked').value,
+            allow_relocation: document.getElementById('allowRelocation').checked,
+            english_level: document.getElementById('englishLevel').value,
+            experience: selectedValues('searchExperience'),
+            employment: selectedValues('searchEmployment'),
+            blocked_companies: splitLines(document.getElementById('blockedCompanies').value),
+            negative_keywords: splitLines(document.getElementById('negativeKeywords').value),
+            block_recruiting_agencies: document.getElementById('blockAgencies').checked
+          }})
+        });
+        document.getElementById('configText').value = data.config;
+        document.getElementById('profileText').value = JSON.stringify(data.profile, null, 2);
+        populatePreferences(data.preferences, data.options);
+        updateResumeSummary(data.profile);
+        setStatus('Настройки поиска сохранены. Можно запускать поиск вакансий.', 'ok');
+        log('Анкета поиска сохранена');
       });
     }
     async function saveCredentials() {
@@ -1045,6 +1241,33 @@ class Handler(BaseHTTPRequestHandler):
                 save_user_profile(user, profile)
                 self._send_json({"ok": True})
                 return
+        if len(parts) == 4 and parts[3] == "preferences":
+            create_user(user)
+            if method == "GET":
+                config = load_user_config(user)
+                self._send_json({"preferences": preferences_from_config(config), "options": form_options()})
+                return
+            if method == "POST":
+                payload = self._read_json().get("preferences")
+                if not isinstance(payload, dict):
+                    raise WebError(HTTPStatus.BAD_REQUEST, "Настройки поиска должны быть объектом.")
+                config = apply_preferences(load_user_config(user), payload)
+                profile = load_user_profile(user)
+                profile["desired_salary"] = config.get("search", {}).get("desired_salary") or 0
+                profile["target_roles"] = list(config.get("search", {}).get("keywords") or [])
+                save_user_config(user, config)
+                save_user_profile(user, profile)
+                path = user_dir(user) / "config.yaml"
+                self._send_json(
+                    {
+                        "ok": True,
+                        "preferences": preferences_from_config(config),
+                        "options": form_options(),
+                        "profile": profile,
+                        "config": path.read_text(encoding="utf-8"),
+                    }
+                )
+                return
         if len(parts) == 4 and parts[3] == "config":
             create_user(user)
             path = user_dir(user) / "config.yaml"
@@ -1062,7 +1285,22 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(data, dict):
                     raise WebError(HTTPStatus.BAD_REQUEST, "config.yaml должен быть YAML-объектом.")
                 save_user_config(user, data)
-                self._send_json({"ok": True})
+                profile = load_user_profile(user)
+                search_data = data.get("search") or {}
+                if "desired_salary" in search_data or "keywords" in search_data:
+                    if "desired_salary" in search_data:
+                        profile["desired_salary"] = search_data.get("desired_salary") or 0
+                    if "keywords" in search_data:
+                        profile["target_roles"] = list(search_data.get("keywords") or [])
+                    save_user_profile(user, profile)
+                self._send_json(
+                    {
+                        "ok": True,
+                        "config": path.read_text(encoding="utf-8"),
+                        "preferences": preferences_from_config(data),
+                        "options": form_options(),
+                    }
+                )
                 return
         if len(parts) == 4 and parts[3] == "resume" and method == "POST":
             filename, content = self._read_multipart_file("resume")

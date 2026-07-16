@@ -369,6 +369,12 @@ def main() -> None:
 
             run_server(args.host, args.port)
             return
+        if not args.user:
+            raise RuntimeError(
+                "Укажи отдельного пользователя через --user. Например: "
+                "python main.py --user friend scan. "
+                "Для первого запуска удобнее открыть веб-интерфейс: python main.py web"
+            )
 
         config, profile, storage = load_context(args.config, args.profile, args.user)
 
