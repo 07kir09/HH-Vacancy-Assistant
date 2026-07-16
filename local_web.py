@@ -636,13 +636,15 @@ HTML = r"""<!doctype html>
         const fd = new FormData();
         fd.append('resume', file);
         const data = await api(`/api/users/${currentUser}/resume`, {method: 'POST', body: fd});
-        document.getElementById('profileText').value = JSON.stringify(data.profile, null, 2);
+        const savedProfile = await api(`/api/users/${currentUser}/profile`);
+        document.getElementById('profileText').value = JSON.stringify(savedProfile.profile, null, 2);
         const config = await api(`/api/users/${currentUser}/config`);
         document.getElementById('configText').value = config.config;
-        updateResumeSummary(data.profile);
+        updateResumeSummary(savedProfile.profile);
         updateParseReport(data.parse_report, data.extracted_text);
         const kind = data.parse_report && data.parse_report.score >= 70 ? 'ok' : 'error';
-        setStatus(`Резюме загружено. Качество распознавания: ${data.parse_report.score}/100. Проверь и подтверди профиль.`, kind);
+        showTab('profile');
+        setStatus(`Резюме загружено. Качество распознавания: ${data.parse_report.score}/100. Проверь JSON-профиль и нажми «Сохранить и подтвердить профиль».`, kind);
         log(`Резюме распарсено: ${data.skills.join(', ') || 'навыки не найдены'}`);
       });
     }
