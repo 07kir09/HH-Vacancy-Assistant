@@ -201,6 +201,14 @@ HTML = r"""<!doctype html>
       gap: 12px;
     }
     .preferences-grid .full { grid-column: 1 / -1; }
+    .profile-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .profile-grid .full { grid-column: 1 / -1; }
+    .profile-textarea { min-height: 96px; font-family: inherit; font-size: 13px; }
+    .profile-note { min-height: 72px; }
     .option-list {
       display: flex;
       flex-wrap: wrap;
@@ -302,6 +310,8 @@ HTML = r"""<!doctype html>
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .preferences-grid { grid-template-columns: 1fr; }
       .preferences-grid .full { grid-column: auto; }
+      .profile-grid { grid-template-columns: 1fr; }
+      .profile-grid .full { grid-column: auto; }
     }
   </style>
 </head>
@@ -398,11 +408,92 @@ HTML = r"""<!doctype html>
           <div class="row">
             <div style="flex: 1">
               <h2>Профиль из резюме</h2>
-              <div class="help">Здесь можно поправить роли, зарплату, навыки и факты для сопроводительных писем. Поиск доступен только после сохранения и подтверждения профиля.</div>
+              <div class="help">После загрузки резюме поля заполняются автоматически. Проверь их, дополни недостающее и подтверди профиль перед поиском.</div>
             </div>
             <button class="primary" onclick="saveProfile()">Сохранить и подтвердить профиль</button>
           </div>
-          <textarea id="profileText" placeholder="После загрузки резюме здесь появится JSON-профиль кандидата."></textarea>
+          <div class="profile-grid">
+            <div>
+              <label for="profileName">Имя и фамилия</label>
+              <input id="profileName" autocomplete="name" placeholder="Например: Кирилл Воякин" />
+            </div>
+            <div>
+              <label for="profileCity">Город</label>
+              <input id="profileCity" placeholder="Например: Москва" />
+            </div>
+            <div>
+              <label for="profileRoles">Целевые роли и направления</label>
+              <textarea id="profileRoles" class="profile-textarea" placeholder="Data Analyst\nProduct Analyst"></textarea>
+              <div class="help">По одной роли на строку или через запятую.</div>
+            </div>
+            <div>
+              <label for="profileSalary">Желаемая зарплата, руб./мес.</label>
+              <input id="profileSalary" type="number" min="0" step="1000" placeholder="Например: 180000" />
+              <div class="help">Это значение синхронизируется с настройками поиска.</div>
+            </div>
+            <div class="full">
+              <label for="profileSkills">Навыки</label>
+              <textarea id="profileSkills" class="profile-textarea" placeholder="SQL, Python, pandas, Power BI"></textarea>
+              <div class="help">Указывай только подтвержденные резюме навыки. Они влияют на score и содержание письма.</div>
+            </div>
+            <div class="full">
+              <label for="profileExperienceSummary">Кратко о релевантном опыте</label>
+              <textarea id="profileExperienceSummary" class="profile-textarea" placeholder="Опыт работы с данными, аналитическими проектами и задачами..."></textarea>
+            </div>
+            <div>
+              <label for="profileStrengths">Сильные стороны</label>
+              <textarea id="profileStrengths" class="profile-textarea" placeholder="Работа с SQL и Python\nПостроение дашбордов"></textarea>
+            </div>
+            <div>
+              <label for="profileFacts">Факты для сопроводительных писем</label>
+              <textarea id="profileFacts" class="profile-textarea" placeholder="Делал проект по анализу...\nИспользовал SQL и Python..."></textarea>
+              <div class="help">Короткие, проверяемые факты. Генератор выберет подходящий под вакансию.</div>
+            </div>
+            <div class="full">
+              <label for="profileEducation">Образование</label>
+              <textarea id="profileEducation" class="profile-textarea profile-note" placeholder="Вуз, направление, курс или год выпуска"></textarea>
+            </div>
+            <div>
+              <label for="profileEmail">Email</label>
+              <input id="profileEmail" type="email" autocomplete="email" placeholder="name@example.com" />
+            </div>
+            <div>
+              <label for="profilePhone">Телефон</label>
+              <input id="profilePhone" type="tel" autocomplete="tel" placeholder="+7 ..." />
+            </div>
+            <div>
+              <label for="profileTelegram">Telegram</label>
+              <input id="profileTelegram" placeholder="@username" />
+            </div>
+            <div>
+              <label for="profileGithub">GitHub / портфолио</label>
+              <input id="profileGithub" placeholder="github.com/username или ссылка на портфолио" />
+            </div>
+            <div>
+              <label for="letterTone">Тон сопроводительного</label>
+              <select id="letterTone">
+                <option value="concise">Короткий и нейтральный</option>
+                <option value="standard">Стандартный, с интересом к задачам</option>
+                <option value="direct">Более инициативный</option>
+              </select>
+            </div>
+            <div>
+              <label>Язык сопроводительного</label>
+              <div class="summary">Сейчас письма генерируются на русском языке.</div>
+            </div>
+            <div class="full">
+              <label for="letterIntro">Своя стартовая фраза для письма</label>
+              <textarea id="letterIntro" class="profile-textarea profile-note" placeholder="Необязательно. Используй только если эта фраза подходит для большинства откликов."></textarea>
+            </div>
+          </div>
+          <details class="advanced-config">
+            <summary>Расширенный JSON-профиль</summary>
+            <div class="help">Здесь хранятся структурированные проекты, опыт и дополнительные поля из резюме. Редактируй только если понимаешь формат; после изменения нажми «Применить JSON к форме», затем сохрани профиль.</div>
+            <div class="row" style="margin: 10px 0">
+              <button type="button" onclick="applyProfileJson()">Применить JSON к форме</button>
+            </div>
+            <textarea id="profileText" placeholder="После загрузки резюме здесь появится JSON-профиль кандидата."></textarea>
+          </details>
         </div>
       </section>
 
@@ -698,6 +789,7 @@ HTML = r"""<!doctype html>
       const profile = await api(`/api/users/${currentUser}/profile`);
       const config = await api(`/api/users/${currentUser}/config`);
       document.getElementById('profileText').value = JSON.stringify(profile.profile, null, 2);
+      populateProfileForm(profile.profile);
       document.getElementById('configText').value = config.config;
       await loadPreferences();
       const email = ((profile.profile.links || {}).email || '').trim();
@@ -715,6 +807,7 @@ HTML = r"""<!doctype html>
       resumeSummaryEl.textContent = 'Резюме еще не загружено для выбранного пользователя.';
       tokenSummaryEl.textContent = 'Выбери пользователя, чтобы настроить доступ к HH API.';
       document.getElementById('profileText').value = '';
+      clearProfileForm();
       document.getElementById('configText').value = '';
       clearPreferences();
       document.getElementById('contactEmail').value = '';
@@ -734,6 +827,7 @@ HTML = r"""<!doctype html>
         const data = await api(`/api/users/${currentUser}/resume`, {method: 'POST', body: fd});
         const savedProfile = await api(`/api/users/${currentUser}/profile`);
         document.getElementById('profileText').value = JSON.stringify(savedProfile.profile, null, 2);
+        populateProfileForm(savedProfile.profile);
         const config = await api(`/api/users/${currentUser}/config`);
         document.getElementById('configText').value = config.config;
         await loadPreferences();
@@ -741,17 +835,19 @@ HTML = r"""<!doctype html>
         updateParseReport(data.parse_report, data.extracted_text);
         const kind = data.parse_report && data.parse_report.score >= 70 ? 'ok' : 'error';
         showTab('profile');
-        setStatus(`Резюме загружено. Качество распознавания: ${data.parse_report.score}/100. Проверь JSON-профиль и нажми «Сохранить и подтвердить профиль».`, kind);
+        setStatus(`Резюме загружено. Качество распознавания: ${data.parse_report.score}/100. Проверь поля профиля, при необходимости исправь их и нажми «Сохранить и подтвердить профиль».`, kind);
         log(`Резюме распарсено: ${data.skills.join(', ') || 'навыки не найдены'}`);
       });
     }
     async function saveProfile() {
       await runAction('Сохраняю профиль...', async () => {
         requireUser();
-        const profile = JSON.parse(document.getElementById('profileText').value);
+        const profile = profileFromForm();
         profile.profile_reviewed = true;
         await api(`/api/users/${currentUser}/profile`, {method: 'POST', body: JSON.stringify({profile})});
         document.getElementById('profileText').value = JSON.stringify(profile, null, 2);
+        populateProfileForm(profile);
+        await loadPreferences();
         updateResumeSummary(profile);
         setStatus('Профиль сохранен и подтвержден. Теперь можно запускать поиск.', 'ok');
         log('Профиль сохранен и подтвержден');
@@ -800,6 +896,99 @@ HTML = r"""<!doctype html>
     }
     function splitLines(value) {
       return String(value || '').split(/[\n,]/).map(item => item.trim()).filter(Boolean);
+    }
+    function inputValue(id) {
+      return document.getElementById(id).value.trim();
+    }
+    function setInputValue(id, value) {
+      document.getElementById(id).value = value == null ? '' : String(value);
+    }
+    function valuesToLines(values) {
+      return Array.isArray(values) ? values.map(item => String(item).trim()).filter(Boolean).join('\n') : '';
+    }
+    function educationToText(education) {
+      if (typeof education === 'string') return education;
+      if (!education || typeof education !== 'object') return '';
+      if (education.summary) return String(education.summary);
+      return ['university', 'faculty', 'program', 'gpa']
+        .map(key => education[key] ? String(education[key]).trim() : '')
+        .filter(Boolean)
+        .join(', ');
+    }
+    function populateProfileForm(profile) {
+      const value = profile || {};
+      const links = value.links && typeof value.links === 'object' ? value.links : {};
+      const letter = value.cover_letter && typeof value.cover_letter === 'object' ? value.cover_letter : {};
+      setInputValue('profileName', value.name);
+      setInputValue('profileCity', value.city);
+      setInputValue('profileRoles', valuesToLines(value.target_roles));
+      setInputValue('profileSalary', value.desired_salary || '');
+      setInputValue('profileSkills', valuesToLines(value.skills));
+      setInputValue('profileExperienceSummary', value.experience_summary);
+      setInputValue('profileStrengths', valuesToLines(value.strengths));
+      setInputValue('profileFacts', valuesToLines(value.cover_letter_facts));
+      setInputValue('profileEducation', educationToText(value.education));
+      setInputValue('profileEmail', links.email);
+      setInputValue('profilePhone', links.phone);
+      setInputValue('profileTelegram', links.telegram);
+      setInputValue('profileGithub', links.github || links.portfolio);
+      document.getElementById('letterTone').value = ['concise', 'standard', 'direct'].includes(letter.tone) ? letter.tone : 'concise';
+      setInputValue('letterIntro', letter.custom_intro);
+    }
+    function clearProfileForm() {
+      populateProfileForm({});
+    }
+    function profileFromForm() {
+      const raw = document.getElementById('profileText').value.trim();
+      const profile = raw ? JSON.parse(raw) : {};
+      if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+        throw new Error('Расширенный JSON-профиль должен быть объектом.');
+      }
+      const links = profile.links && typeof profile.links === 'object' ? {...profile.links} : {};
+      const letter = profile.cover_letter && typeof profile.cover_letter === 'object' ? {...profile.cover_letter} : {};
+      profile.name = inputValue('profileName');
+      profile.city = inputValue('profileCity');
+      profile.target_roles = splitLines(document.getElementById('profileRoles').value);
+      profile.desired_salary = Number(document.getElementById('profileSalary').value) || 0;
+      profile.skills = splitLines(document.getElementById('profileSkills').value);
+      profile.experience_summary = inputValue('profileExperienceSummary');
+      profile.strengths = splitLines(document.getElementById('profileStrengths').value);
+      profile.cover_letter_facts = splitLines(document.getElementById('profileFacts').value);
+      const educationText = inputValue('profileEducation');
+      const education = profile.education && typeof profile.education === 'object' && !Array.isArray(profile.education)
+        ? {...profile.education}
+        : {};
+      if (educationText) education.summary = educationText;
+      else delete education.summary;
+      profile.education = education;
+      links.email = inputValue('profileEmail');
+      links.phone = inputValue('profilePhone');
+      links.telegram = inputValue('profileTelegram');
+      const githubOrPortfolio = inputValue('profileGithub');
+      if (/github/i.test(githubOrPortfolio)) {
+        links.github = githubOrPortfolio;
+      } else {
+        links.portfolio = githubOrPortfolio;
+      }
+      profile.links = links;
+      letter.tone = document.getElementById('letterTone').value;
+      letter.custom_intro = inputValue('letterIntro');
+      profile.cover_letter = letter;
+      return profile;
+    }
+    function applyProfileJson() {
+      try {
+        const profile = JSON.parse(document.getElementById('profileText').value);
+        if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+          throw new Error('JSON-профиль должен быть объектом.');
+        }
+        populateProfileForm(profile);
+        setStatus('Данные из JSON перенесены в форму. Проверь поля и сохрани профиль.', 'ok');
+      } catch (error) {
+        const message = errorMessage(error);
+        setStatus(message, 'error');
+        log(`Ошибка JSON-профиля: ${message}`);
+      }
     }
     function populatePreferences(preferences, options) {
       preferenceOptions = options || preferenceOptions;
@@ -858,6 +1047,7 @@ HTML = r"""<!doctype html>
         });
         document.getElementById('configText').value = data.config;
         document.getElementById('profileText').value = JSON.stringify(data.profile, null, 2);
+        populateProfileForm(data.profile);
         populatePreferences(data.preferences, data.options);
         updateResumeSummary(data.profile);
         setStatus('Настройки поиска сохранены. Можно запускать поиск вакансий.', 'ok');
@@ -1239,6 +1429,11 @@ class Handler(BaseHTTPRequestHandler):
                     raise WebError(HTTPStatus.BAD_REQUEST, "profile must be an object")
                 profile["profile_reviewed"] = True
                 save_user_profile(user, profile)
+                config = load_user_config(user)
+                search = config.setdefault("search", {})
+                search["keywords"] = list(profile.get("target_roles") or [])
+                search["desired_salary"] = profile.get("desired_salary") or 0
+                save_user_config(user, config)
                 self._send_json({"ok": True})
                 return
         if len(parts) == 4 and parts[3] == "preferences":
