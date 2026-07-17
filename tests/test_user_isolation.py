@@ -82,6 +82,20 @@ class UserIsolationTests(unittest.TestCase):
             self.assertEqual(storage.list_drafts(), [])
             self.assertEqual(storage.load_token("hh_app"), {"access_token": "token"})
 
+    def test_delete_user_removes_only_selected_user_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            original_root = users.USERS_ROOT
+            users.USERS_ROOT = Path(directory) / "users"
+            try:
+                users.create_user("first-user")
+                users.create_user("second-user")
+                users.delete_user("first-user")
+                remaining = users.list_users()
+            finally:
+                users.USERS_ROOT = original_root
+
+        self.assertEqual(remaining, ["second-user"])
+
 
 if __name__ == "__main__":
     unittest.main()
