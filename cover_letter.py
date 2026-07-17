@@ -157,6 +157,43 @@ def _tone(profile: dict[str, Any]) -> str:
     return value if value in {"concise", "standard", "direct"} else "concise"
 
 
+def _experience_years(profile: dict[str, Any]) -> int:
+    try:
+        years = int(profile.get("experience_years") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return years if 0 < years <= 50 else 0
+
+
+def _years_label(years: int) -> str:
+    remainder = years % 100
+    if 11 <= remainder <= 14:
+        return f"{years} лет"
+    ending = years % 10
+    if ending == 1:
+        return f"{years} год"
+    if 2 <= ending <= 4:
+        return f"{years} года"
+    return f"{years} лет"
+
+
+def _links_paragraph(profile: dict[str, Any]) -> str:
+    links = profile.get("links") or {}
+    if not isinstance(links, dict):
+        return ""
+    details: list[str] = []
+    resume = str(links.get("resume") or "").strip()
+    portfolio = str(links.get("portfolio") or "").strip()
+    github = str(links.get("github") or "").strip()
+    if resume:
+        details.append(f"резюме: {resume}")
+    if portfolio:
+        details.append(f"портфолио: {portfolio}")
+    elif github:
+        details.append(f"GitHub: {github}")
+    return "Подробнее об опыте и кейсах: " + "; ".join(details) + "." if details else ""
+
+
 def generate_cover_letter_result(vacancy: dict[str, Any], profile: dict[str, Any]) -> LetterResult:
     title = str(vacancy.get("name") or "вакансия")
     company = str((vacancy.get("employer") or {}).get("name") or "вашей команде")
@@ -168,47 +205,56 @@ def generate_cover_letter_result(vacancy: dict[str, Any], profile: dict[str, Any
     cover_fact = _best_cover_fact(profile, matched)
     summary = _clip(str(profile.get("experience_summary") or ""), 260)
     tone = _tone(profile)
+    years = _experience_years(profile)
+    roles = [str(item).strip() for item in profile.get("target_roles", []) if str(item).strip()]
+    role = roles[0] if roles else "аналитическими и продуктовыми задачами"
 
-    paragraphs = ["Здравствуйте!"]
-    if custom_intro:
-        paragraphs.append(custom_intro)
-    elif name:
-        paragraphs.append(f"Меня зовут {name}. Заинтересовала вакансия «{title}» в {company}.")
+    paragraphs = [custom_intro or "Здравствуйте!"]
+    if name:
+        paragraphs.append(f"Меня зовут {name}. Пишу по вакансии «{title}» в {company}.")
     else:
-        paragraphs.append(f"Заинтересовала вакансия «{title}» в {company}.")
+        paragraphs.append(f"Пишу по вакансии «{title}» в {company}.")
+
+    if years:
+        duration = "Последний год" if years == 1 else f"Последние {_years_label(years)}"
+        experience = f"{duration} работаю с задачами в направлении {role}."
+        if summary:
+            experience += f" {summary}."
+        paragraphs.append(experience)
+    elif summary:
+        paragraphs.append(f"Мой релевантный опыт: {summary}.")
 
     if matched:
         paragraphs.append(
-            "По описанию вижу предметное совпадение: в резюме указаны "
+            "Для этой роли могу опираться на "
             + ", ".join(matched)
-            + ", которые требуются для этой роли."
+            + ": эти навыки указаны в моем резюме и совпадают с требованиями вакансии."
         )
-    elif summary:
-        paragraphs.append(f"Мой профиль: {summary}.")
 
     if project:
         project_name = _clip(str(project.get("name") or "проект"), 90)
         project_description = _clip(str(project.get("description") or ""), 280)
         stack = [str(item).strip() for item in project.get("stack", []) if str(item).strip()]
-        evidence = f"В релевантном проекте «{project_name}»"
+        evidence = f"Один из релевантных проектов - «{project_name}»"
         if project_description:
             evidence += f" {project_description.lower()}"
         if stack:
             evidence += f". Использовал: {', '.join(stack[:4])}"
         paragraphs.append(evidence.rstrip(".") + ".")
     elif experience_fact:
-        paragraphs.append(f"Из опыта: {experience_fact}.")
+        paragraphs.append(f"Из релевантного опыта: {experience_fact}.")
     elif cover_fact:
-        paragraphs.append(f"Релевантный факт из профиля: {cover_fact}.")
-    elif summary and matched:
-        paragraphs.append(f"Мой профиль: {summary}.")
+        paragraphs.append(f"Релевантный факт: {cover_fact}.")
 
     if tone == "standard":
         paragraphs.append(_focus_sentence(vacancy))
     elif tone == "direct":
         paragraphs.append("Буду рад обсудить, какие задачи этой роли смогу закрыть в первые месяцы работы.")
 
-    paragraphs.append("Буду рад обсудить, как мой опыт может быть полезен вашей команде.")
+    links_paragraph = _links_paragraph(profile)
+    if links_paragraph:
+        paragraphs.append(links_paragraph)
+    paragraphs.append("Буду рад(а) пообщаться по вакансии!")
     letter = "\n\n".join(item.strip() for item in paragraphs if item.strip())
     return LetterResult(letter=letter, quality=check_cover_letter_quality(letter, vacancy, profile))
 
@@ -258,8 +304,10 @@ def check_cover_letter_quality(letter: str, vacancy: dict[str, Any], profile: di
         warnings.append("Рекомендуемая длина: 55-230 слов и 350-1800 символов.")
     if unsupported:
         warnings.append("В письме упомянуты навыки, которых нет в профиле: " + ", ".join(unsupported) + ".")
-    if re.search(r"\b\d+\s*(?:лет|года|years?)\b", normalized):
-        warnings.append("Письмо содержит числовое утверждение об опыте. Проверь, что оно подтверждено резюме.")
+    stated_years = [int(value) for value in re.findall(r"\b(\d+)\s*(?:лет|года|год|years?)\b", normalized)]
+    verified_years = _experience_years(profile)
+    if stated_years and (not verified_years or any(value > verified_years for value in stated_years)):
+        warnings.append("Письмо содержит числовое утверждение об опыте. Проверь, что оно подтверждено в профиле.")
 
     if score >= 80 and not warnings:
         status, label = "ready", "Готово к отклику"

@@ -431,6 +431,11 @@ HTML = r"""<!doctype html>
               <input id="profileSalary" type="number" min="0" step="1000" placeholder="Например: 180000" />
               <div class="help">Это значение синхронизируется с настройками поиска.</div>
             </div>
+            <div>
+              <label for="profileExperienceYears">Релевантный опыт, лет</label>
+              <input id="profileExperienceYears" type="number" min="0" max="50" step="1" placeholder="Например: 3" />
+              <div class="help">Необязательно. Укажи только подтвержденный опыт, чтобы он мог попасть в письмо.</div>
+            </div>
             <div class="full">
               <label for="profileSkills">Навыки</label>
               <textarea id="profileSkills" class="profile-textarea" placeholder="SQL, Python, pandas, Power BI"></textarea>
@@ -466,6 +471,10 @@ HTML = r"""<!doctype html>
               <input id="profileTelegram" placeholder="@username" />
             </div>
             <div>
+              <label for="profileResumeUrl">Ссылка на резюме</label>
+              <input id="profileResumeUrl" type="url" placeholder="https://..." />
+            </div>
+            <div>
               <label for="profileGithub">GitHub / портфолио</label>
               <input id="profileGithub" placeholder="github.com/username или ссылка на портфолио" />
             </div>
@@ -482,8 +491,8 @@ HTML = r"""<!doctype html>
               <div class="summary">Сейчас письма генерируются на русском языке.</div>
             </div>
             <div class="full">
-              <label for="letterIntro">Своя стартовая фраза для письма</label>
-              <textarea id="letterIntro" class="profile-textarea profile-note" placeholder="Необязательно. Используй только если эта фраза подходит для большинства откликов."></textarea>
+              <label for="letterIntro">Свое приветствие для письма</label>
+              <textarea id="letterIntro" class="profile-textarea profile-note" placeholder="Необязательно. Например: Аня, добрый день! Используй только если обращение подходит для большинства откликов."></textarea>
             </div>
           </div>
           <details class="advanced-config">
@@ -924,6 +933,7 @@ HTML = r"""<!doctype html>
       setInputValue('profileCity', value.city);
       setInputValue('profileRoles', valuesToLines(value.target_roles));
       setInputValue('profileSalary', value.desired_salary || '');
+      setInputValue('profileExperienceYears', value.experience_years || '');
       setInputValue('profileSkills', valuesToLines(value.skills));
       setInputValue('profileExperienceSummary', value.experience_summary);
       setInputValue('profileStrengths', valuesToLines(value.strengths));
@@ -932,6 +942,7 @@ HTML = r"""<!doctype html>
       setInputValue('profileEmail', links.email);
       setInputValue('profilePhone', links.phone);
       setInputValue('profileTelegram', links.telegram);
+      setInputValue('profileResumeUrl', links.resume);
       setInputValue('profileGithub', links.github || links.portfolio);
       document.getElementById('letterTone').value = ['concise', 'standard', 'direct'].includes(letter.tone) ? letter.tone : 'concise';
       setInputValue('letterIntro', letter.custom_intro);
@@ -951,6 +962,7 @@ HTML = r"""<!doctype html>
       profile.city = inputValue('profileCity');
       profile.target_roles = splitLines(document.getElementById('profileRoles').value);
       profile.desired_salary = Number(document.getElementById('profileSalary').value) || 0;
+      profile.experience_years = Number(document.getElementById('profileExperienceYears').value) || 0;
       profile.skills = splitLines(document.getElementById('profileSkills').value);
       profile.experience_summary = inputValue('profileExperienceSummary');
       profile.strengths = splitLines(document.getElementById('profileStrengths').value);
@@ -965,6 +977,7 @@ HTML = r"""<!doctype html>
       links.email = inputValue('profileEmail');
       links.phone = inputValue('profilePhone');
       links.telegram = inputValue('profileTelegram');
+      links.resume = inputValue('profileResumeUrl');
       const githubOrPortfolio = inputValue('profileGithub');
       if (/github/i.test(githubOrPortfolio)) {
         links.github = githubOrPortfolio;
