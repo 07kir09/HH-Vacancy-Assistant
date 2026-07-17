@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +11,103 @@ import yaml
 ROOT = Path(__file__).resolve().parent
 USERS_ROOT = ROOT / "data" / "users"
 DEFAULT_CONFIG = ROOT / "config.yaml"
+USER_CONFIG_VERSION = 2
+
+_LEGACY_TEMPLATE_KEYWORDS = ["data analyst", "product analyst", "sql", "python", "bi"]
+_LEGACY_TEMPLATE_AREAS = ["1"]
+_LEGACY_TEMPLATE_POSITIVE = [
+    "sql",
+    "python",
+    "dashboard",
+    "tableau",
+    "power bi",
+    "looker",
+    "a/b",
+    "ab test",
+    "product metrics",
+    "etl",
+    "airflow",
+    "pandas",
+    "statistics",
+]
+
+
+def _normalized_strings(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip().lower() for item in value if str(item).strip()]
+
+
+def _same_values(value: Any, expected: list[str]) -> bool:
+    return _normalized_strings(value) == expected
+
+
+def _empty_user_preferences(config: dict[str, Any]) -> dict[str, Any]:
+    """Remove candidate-specific assumptions from the repository template."""
+    search = config.setdefault("search", {})
+    search.update(
+        {
+            "keywords": [],
+            "areas": [],
+            "desired_salary": None,
+            "only_with_salary": False,
+            "experience": [],
+            "employment": [],
+            "work_format": [],
+            "schedule": [],
+            "excluded_text": "",
+        }
+    )
+    search.pop("strategies", None)
+
+    filters = config.setdefault("filters", {})
+    filters.update(
+        {
+            "max_required_years": 99,
+            "allow_no_salary": True,
+            "allow_remote": True,
+            "allow_relocation": True,
+            "english_level": "",
+            "blocked_companies": [],
+            "block_recruiting_agencies": True,
+            "allowed_area_ids": [],
+            "target_titles": [],
+            "positive_keywords": [],
+            "negative_keywords": [],
+        }
+    )
+    config.setdefault("app", {})["user_config_version"] = USER_CONFIG_VERSION
+    return config
+
+
+def _migrate_legacy_user_config(config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Remove the old public template's analyst preferences without touching user edits."""
+    app = config.setdefault("app", {})
+    if int(app.get("user_config_version", 0) or 0) >= USER_CONFIG_VERSION:
+        return config, False
+
+    search = config.setdefault("search", {})
+    filters = config.setdefault("filters", {})
+    is_legacy_analyst_template = _same_values(search.get("keywords"), _LEGACY_TEMPLATE_KEYWORDS)
+    if is_legacy_analyst_template:
+        search["keywords"] = []
+        if _same_values(search.get("areas"), _LEGACY_TEMPLATE_AREAS):
+            search["areas"] = []
+        if search.get("desired_salary") == 180000:
+            search["desired_salary"] = None
+        if _same_values(filters.get("positive_keywords"), _LEGACY_TEMPLATE_POSITIVE):
+            filters["positive_keywords"] = []
+        if _same_values(
+            filters.get("target_titles"),
+            ["data analyst", "product analyst", "analyst", "bi analyst", "sql analyst"],
+        ):
+            filters["target_titles"] = []
+        if _same_values(filters.get("allowed_area_ids"), _LEGACY_TEMPLATE_AREAS):
+            filters["allowed_area_ids"] = []
+        if filters.get("max_required_years") == 4:
+            filters["max_required_years"] = 99
+    app["user_config_version"] = USER_CONFIG_VERSION
+    return config, True
 
 
 def slugify_user(value: str) -> str:
@@ -53,10 +149,9 @@ def create_user(user_id: str) -> Path:
     path = ensure_user(user_id)
     config_path = path / "config.yaml"
     if not config_path.exists():
-        shutil.copyfile(DEFAULT_CONFIG, config_path)
-        config = load_user_config(user_id)
+        config = _empty_user_preferences(load_yaml(DEFAULT_CONFIG))
         config.setdefault("storage", {})["sqlite_path"] = str(path / "job_apply_bot.db")
-        save_user_config(user_id, config)
+        save_yaml(config_path, config)
     profile_path = path / "resume_profile.json"
     if not profile_path.exists():
         profile_path.write_text(
@@ -96,7 +191,11 @@ def load_user_config(user_id: str) -> dict[str, Any]:
     path = ensure_user(user_id) / "config.yaml"
     if not path.exists():
         create_user(user_id)
-    return load_yaml(path)
+    config = load_yaml(path)
+    config, migrated = _migrate_legacy_user_config(config)
+    if migrated:
+        save_yaml(path, config)
+    return config
 
 
 def save_user_config(user_id: str, config: dict[str, Any]) -> None:

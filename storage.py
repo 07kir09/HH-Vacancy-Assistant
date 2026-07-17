@@ -113,6 +113,12 @@ class Storage:
         row = self.get_vacancy(vacancy_id)
         return bool(row and row["status"] in {"sent", "skipped", "blocked"})
 
+    def clear_vacancies(self) -> int:
+        """Drop vacancy history while retaining locally stored API tokens."""
+        with self.connect() as conn:
+            result = conn.execute("DELETE FROM vacancies")
+        return int(result.rowcount or 0)
+
     def upsert_draft(
         self,
         vacancy: dict[str, Any],

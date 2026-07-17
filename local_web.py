@@ -357,7 +357,7 @@ HTML = r"""<!doctype html>
             <div>
               <label class="required">Файл резюме</label>
               <input id="resumeFile" type="file" accept=".pdf,.docx,.txt,.md" />
-              <div class="help">Поддерживаются PDF, DOCX, TXT и MD. После загрузки профиль и ключевые слова поиска заполнятся автоматически.</div>
+              <div class="help">Поддерживаются PDF, DOCX, TXT и MD. После загрузки профиль и ключевые слова поиска заполнятся автоматически. Предыдущая подборка этого пользователя будет очищена, чтобы вакансии не смешивались между резюме.</div>
             </div>
             <button class="primary" onclick="uploadResume()">Загрузить резюме</button>
             <div id="resumeSummary" class="summary">Резюме еще не загружено для выбранного пользователя.</div>
@@ -835,7 +835,8 @@ HTML = r"""<!doctype html>
         updateParseReport(data.parse_report, data.extracted_text);
         const kind = data.parse_report && data.parse_report.score >= 70 ? 'ok' : 'error';
         showTab('profile');
-        setStatus(`Резюме загружено. Качество распознавания: ${data.parse_report.score}/100. Проверь поля профиля, при необходимости исправь их и нажми «Сохранить и подтвердить профиль».`, kind);
+        const cleared = data.cleared_vacancies ? ` Очищено старых черновиков: ${data.cleared_vacancies}.` : '';
+        setStatus(`Резюме загружено. Качество распознавания: ${data.parse_report.score}/100.${cleared} Проверь поля профиля, при необходимости исправь их и нажми «Сохранить и подтвердить профиль».`, kind);
         log(`Резюме распарсено: ${data.skills.join(', ') || 'навыки не найдены'}`);
       });
     }
@@ -1429,10 +1430,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise WebError(HTTPStatus.BAD_REQUEST, "profile must be an object")
                 profile["profile_reviewed"] = True
                 save_user_profile(user, profile)
-                config = load_user_config(user)
-                search = config.setdefault("search", {})
-                search["keywords"] = list(profile.get("target_roles") or [])
-                search["desired_salary"] = profile.get("desired_salary") or 0
+                config = _configure_search(load_user_config(user), profile)
                 save_user_config(user, config)
                 self._send_json({"ok": True})
                 return
@@ -1513,12 +1511,14 @@ class Handler(BaseHTTPRequestHandler):
             save_user_profile(user, profile)
             config = _configure_search(load_user_config(user), profile)
             save_user_config(user, config)
+            cleared_vacancies = Storage(user_dir(user) / "job_apply_bot.db").clear_vacancies()
             self._send_json(
                 {
                     "profile": profile,
                     "skills": profile.get("skills", []),
                     "extracted_text": text,
                     "parse_report": report,
+                    "cleared_vacancies": cleared_vacancies,
                 }
             )
             return
@@ -1711,7 +1711,10 @@ def _validate_search_config(config: dict) -> None:
         for item in strategies
     )
     if not has_keywords and not has_strategy:
-        raise WebError(HTTPStatus.BAD_REQUEST, "В параметрах поиска нет search.keywords.")
+        raise WebError(
+            HTTPStatus.BAD_REQUEST,
+            "Не указаны целевые роли. Открой вкладку «Профиль» или «Поиск», добавь свои роли и сохрани настройки.",
+        )
 
 
 def _validate_profile_reviewed(profile: dict) -> None:

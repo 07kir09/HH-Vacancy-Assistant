@@ -1,3 +1,6 @@
+app:
+  user_config_version: 2
+
 hh:
   base_url: "https://api.hh.ru"
   auth_url: "https://hh.ru/oauth/authorize"
@@ -9,34 +12,19 @@ storage:
   sqlite_path: "job_apply_bot.db"
 
 search:
-  keywords:
-    - "Data Analyst"
-    - "Product Analyst"
-    - "SQL"
-    - "Python"
-    - "BI"
-  areas:
-    - "1"
+  keywords: []
+  areas: []
   period_days: 14
   per_page: 20
   pages_per_keyword: 1
   currency: "RUR"
-  desired_salary: 180000
+  desired_salary: null
   only_with_salary: false
-  experience:
-    - "noExperience"
-    - "between1And3"
-    - "between3And6"
-  employment:
-    - "full"
-  work_format:
-    - "REMOTE"
-    - "HYBRID"
-    - "ON_SITE"
-  schedule:
-    - "remote"
-    - "fullDay"
-  excluded_text: "java,c++,c#,php,1c,bitrix,devops,qa,tester,support"
+  experience: []
+  employment: []
+  work_format: []
+  schedule: []
+  excluded_text: ""
   # Optional independent strategies. Each one can override search fields and filters.
   # strategies:
   #   - name: "Product analytics"
@@ -50,7 +38,7 @@ search:
 filters:
   min_score: 65
   recommended_score: 80
-  max_required_years: 4
+  max_required_years: 99
   block_already_applied: true
   block_archived: true
   block_tests: false
@@ -61,43 +49,10 @@ filters:
   english_level: ""
   blocked_companies: []
   block_recruiting_agencies: true
-  allowed_area_ids:
-    - "1"
-  target_titles:
-    - "data analyst"
-    - "product analyst"
-    - "analyst"
-    - "bi analyst"
-    - "sql analyst"
-  positive_keywords:
-    - "sql"
-    - "python"
-    - "dashboard"
-    - "tableau"
-    - "power bi"
-    - "looker"
-    - "a/b"
-    - "ab test"
-    - "product metrics"
-    - "etl"
-    - "airflow"
-    - "pandas"
-    - "statistics"
-  negative_keywords:
-    - "senior"
-    - "lead"
-    - "head of"
-    - "architect"
-    - "java"
-    - "c++"
-    - "c#"
-    - "php"
-    - "1c"
-    - "bitrix"
-    - "devops"
-    - "qa"
-    - "tester"
-    - "technical support"
+  allowed_area_ids: []
+  target_titles: []
+  positive_keywords: []
+  negative_keywords: []
 
 limits:
   max_drafts_per_scan: 20

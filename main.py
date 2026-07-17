@@ -26,6 +26,7 @@ from users import (
     save_uploaded_resume,
     save_user_config,
     save_user_profile,
+    user_dir,
 )
 
 
@@ -259,25 +260,27 @@ def cmd_app_token(api: HHApiClient) -> None:
 
 
 def configure_search_from_profile(config: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
-    target_roles = [str(item) for item in profile.get("target_roles", []) if item]
-    preferred = [str(item) for item in profile.get("preferred_keywords", []) if item]
-    skills = [str(item) for item in profile.get("skills", []) if item]
-    keywords = []
-    for item in [*target_roles, *preferred[:6]]:
-        if item.lower() not in {existing.lower() for existing in keywords}:
-            keywords.append(item)
-    if keywords:
-        config.setdefault("search", {})["keywords"] = keywords[:12]
-    if profile.get("desired_salary"):
-        config.setdefault("search", {})["desired_salary"] = profile.get("desired_salary")
-    positives = []
-    for item in [*preferred, *skills]:
-        if item.lower() not in {existing.lower() for existing in positives}:
-            positives.append(item)
-    if positives:
-        config.setdefault("filters", {})["positive_keywords"] = positives[:30]
-    if target_roles:
-        config.setdefault("filters", {})["target_titles"] = [role.lower() for role in target_roles]
+    def unique(values: list[Any], limit: int) -> list[str]:
+        result: list[str] = []
+        for value in values:
+            item = str(value).strip()
+            if item and item.lower() not in {existing.lower() for existing in result}:
+                result.append(item)
+            if len(result) >= limit:
+                break
+        return result
+
+    target_roles = unique(list(profile.get("target_roles") or []), 20)
+    skills = unique(list(profile.get("skills") or []), 30)
+    search = config.setdefault("search", {})
+    filters = config.setdefault("filters", {})
+
+    # The search is intentionally derived only from this candidate's profile.
+    # Empty roles keep scanning disabled until the user fills the profile form.
+    search["keywords"] = target_roles
+    search["desired_salary"] = profile.get("desired_salary") or None
+    filters["positive_keywords"] = skills
+    filters["target_titles"] = [role.lower() for role in target_roles]
     return config
 
 
@@ -291,7 +294,10 @@ def cmd_import_resume(user_id: str, resume_path: str) -> None:
     save_user_profile(user_id, profile)
     config = configure_search_from_profile(load_user_config(user_id), profile)
     save_user_config(user_id, config)
+    cleared = Storage(user_dir(user_id) / "job_apply_bot.db").clear_vacancies()
     print(f"Imported resume for user '{user_id}'.")
+    if cleared:
+        print(f"Cleared {cleared} old vacancy drafts for this user.")
     print(f"Saved profile: {saved_path.parent.parent / 'resume_profile.json'}")
     print(f"Extracted skills: {', '.join(profile.get('skills', [])[:12])}")
 
